@@ -1,0 +1,30 @@
+# Secrets
+.env
+.env.*
+!.env.sample
+
+# sssf runtime (entries match scripts/install.py so it won't re-append them)
+adws/adw_data/sessions/
+adws/adw_data/sssf.db*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Node / Bun
+node_modules/
+dist/
+*.log
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
