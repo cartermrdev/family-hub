@@ -5,4 +5,4 @@ Family Hub runs entirely on Cloudflare Workers Paid (~$5/mo): the React SPA as s
 ## Consequences
 
 - No Node-only libraries on the server: tsdav (Workers-supported) for CalDAV, `@block65/webcrypto-web-push` instead of `web-push`.
-- Whether Workers' fetch can send CalDAV's PROPFIND/REPORT, and the CPU cost of a sync, is unverified until the CalDAV spike runs from a deployed Worker; if it fails, the fallback is a single Node + SQLite container on Fly.io with the same API shape.
+- A spike from a deployed Worker (2026-10) confirmed that Workers' fetch can send CalDAV's PROPFIND/REPORT and can create, edit and delete Family Calendar events. An incremental sync costs ~60 ms CPU; a full resync of the 3,429-event calendar costs ~1.3 s, so it runs only on first connect, reconnect or an invalid sync token. That rules out Workers Free (10 ms CPU). The Fly.io fallback (one Node + SQLite container with the same API shape) isn't needed.
