@@ -49,8 +49,12 @@ A Member's per-Linked-Calendar choice of showing Full Details or Busy Only.
 _Avoid_: Privacy setting, sharing level
 
 **Chore**:
-A piece of household work, optionally repeating and optionally assigned to one Member; a one-off task is a Chore with no repeat.
+A piece of household work, optionally assigned to one Member and optionally repeating, either on a fixed schedule or a set time after each completion; a one-off task is a Chore with no repeat.
 _Avoid_: Task, to-do, job
+
+**Occurrence**:
+One due instance of a Chore, which ends Done, Skipped or Missed; a Chore has at most one open Occurrence.
+_Avoid_: Instance, task
 
 **Shopping List**:
 A named list of Items to buy, such as "Groceries" or "Costco".
