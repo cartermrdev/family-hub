@@ -1,0 +1,699 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Answers ticket "Prototype the Wall Display dashboard".
+  Three structurally different Wall Display layouts on one page, switchable via
+  ?variant=A|B|C and the floating bar (or ← →). Fixed 1920×1080 landscape canvas,
+  scaled to fit the browser window. All data is fake and in memory; reload resets it.
+  Open by double-clicking (needs internet for React from cdnjs).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wall Display Prototype</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.development.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.development.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #111; overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+  input { font: inherit; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+    transform-origin: center center; overflow: hidden; }
+  .switcher { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 9999; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+    background: #ff3d7f; color: #fff; border-radius: 999px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    font: 600 14px/1 system-ui, sans-serif; }
+  .switcher button { width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.2); }
+  .switcher .state { font-weight: 400; opacity: .9; padding-left: 8px; border-left: 1px solid rgba(255,255,255,.4); }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-8px)} 75%{transform:translateX(8px)} }
+  .shake { animation: shake .3s 2; }
+  @keyframes pop { from { transform: scale(.96); opacity: 0 } to { transform: none; opacity: 1 } }
+  .pop { animation: pop .18s ease-out; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── fake Household ───────────────────────────────────────────────────────────
+const MEMBERS = [
+  { id: 'alex',   name: 'Alex',   role: 'Adult', color: '#3b82f6' },
+  { id: 'jordan', name: 'Jordan', role: 'Adult', color: '#10b981' },
+  { id: 'sam',    name: 'Sam',    role: 'Teen',  color: '#f59e0b' },
+  { id: 'riley',  name: 'Riley',  role: 'Teen',  color: '#a855f7' },
+];
+const M = Object.fromEntries(MEMBERS.map(m => [m.id, m]));
+const EVERYONE = 'everyone';
+const IDLE_MS = 60_000;
+
+const TODAY = new Date(2026, 9, 2); // Fri 2 Oct 2026
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtH = h => { const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  return `${((hh + 11) % 12) + 1}${mm ? ':' + String(mm).padStart(2,'0') : ''}${hh < 12 ? 'am' : 'pm'}`; };
+
+// day offset from TODAY, start/end in hours (null = all-day)
+const EVENTS = [
+  { d: 0, s: 7.5,  e: 8.25, t: 'School drop-off',      who: ['jordan','riley'] },
+  { d: 0, s: 16,   e: 17.5, t: 'Soccer practice',      who: ['sam'], loc: 'Field 3' },
+  { d: 0, s: 18.5, e: 20,   t: 'Pizza night',          who: [EVERYONE] },
+  { d: 0, s: null, t: 'Riley — field trip form due',   who: ['riley'] },
+  { d: 1, s: 9,    e: 10,   t: 'Swim lesson',          who: ['riley'] },
+  { d: 1, s: 11,   e: 15,   t: 'Grandma visiting',     who: [EVERYONE] },
+  { d: 1, s: 19,   e: 22,   t: 'Dinner with the Parks', who: ['alex','jordan'] },
+  { d: 2, s: null, t: 'Farmers market',                who: [] },
+  { d: 2, s: 14,   e: 16,   t: "Sam's game",           who: ['sam','alex'] },
+  { d: 3, s: 8,    e: 9,    t: 'Dentist',              who: ['riley','jordan'] },
+  { d: 3, s: 17,   e: 18,   t: 'Piano',                who: ['riley'] },
+  { d: 4, s: 12,   e: 13,   t: 'Lunch w/ Dana',        who: ['alex'] },
+  { d: 4, s: 18,   e: 19.5, t: 'Parent-teacher night', who: ['alex','jordan'] },
+  { d: 5, s: null, t: 'Bin day',                       who: [EVERYONE] },
+  { d: 5, s: 16,   e: 17.5, t: 'Soccer practice',      who: ['sam'] },
+  { d: 6, s: 7,    e: 8,    t: 'Early shift',          who: ['jordan'] },
+  { d: 6, s: 15.5, e: 17,   t: 'Orthodontist',         who: ['sam'] },
+  { d: 9, s: 10,   e: 12,   t: 'Car service',          who: ['alex'] },
+  { d: 12, s: null, t: 'Long weekend',                 who: [EVERYONE] },
+  { d: 15, s: 18,  e: 21,   t: "Sam's birthday party", who: [EVERYONE] },
+  { d: 21, s: 9,   e: 17,   t: 'Riley school camp',    who: ['riley'] },
+].map((e, i) => ({ ...e, id: 'ev' + i, date: addDays(TODAY, e.d) }));
+
+const INITIAL = {
+  chores: [
+    { id: 'c1', t: 'Take out recycling', who: 'sam',    due: 'Today', by: '7pm',  state: 'open' },
+    { id: 'c2', t: 'Feed the cat',       who: 'riley',  due: 'Today', by: null,   state: 'open' },
+    { id: 'c3', t: 'Empty dishwasher',   who: null,     due: 'Today', by: null,   state: 'open' },
+    { id: 'c4', t: 'Water plants',       who: 'jordan', due: 'Today', by: null,   state: 'done', doneBy: 'jordan' },
+    { id: 'c5', t: 'Vacuum living room', who: 'riley',  due: 'Yesterday', by: null, state: 'open', overdue: true },
+    { id: 'c6', t: 'Mow the lawn',       who: 'alex',   due: 'Sat', by: null,     state: 'open' },
+    { id: 'c7', t: 'Change bed sheets',  who: null,     due: 'Sun', by: null,     state: 'open' },
+  ],
+  lists: [
+    { id: 'l1', name: 'Groceries', items: [
+      { id: 'i1', t: 'Milk', q: '2', by: 'jordan', got: false },
+      { id: 'i2', t: 'Bananas', by: 'riley', got: false },
+      { id: 'i3', t: 'Pasta sauce', by: 'alex', got: false },
+      { id: 'i4', t: 'Cereal', by: 'sam', got: true },
+      { id: 'i5', t: 'Eggs', q: '12', by: 'jordan', got: false },
+    ]},
+    { id: 'l2', name: 'Costco', items: [
+      { id: 'i6', t: 'Paper towels', by: 'alex', got: false },
+      { id: 'i7', t: 'Coffee beans', by: 'jordan', got: false },
+    ]},
+    { id: 'l3', name: 'Hardware', items: [ { id: 'i8', t: 'AA batteries', q: '8', by: 'sam', got: false } ]},
+  ],
+  notes: [
+    { id: 'n1', t: 'Wi-Fi guest password: sunflower42', by: 'alex' },
+    { id: 'n2', t: 'Plumber coming Tue 9–11am', by: 'jordan' },
+    { id: 'n3', t: 'Halloween costume ideas → fridge!', by: 'riley' },
+  ],
+  messages: [
+    { id: 'm1', from: 'jordan', to: ['sam'], t: "Don't forget your cleats 👟", at: '7:42am' },
+    { id: 'm2', from: 'alex', to: ['riley','sam'], t: 'Home late tonight, save me pizza', at: '12:10pm' },
+    { id: 'm3', from: 'riley', to: ['jordan'], t: 'Can I go to Mia\'s after school?', at: '2:31pm' },
+  ],
+};
+
+const WEATHER = { now: 64, cond: 'Partly cloudy', icon: '⛅', hi: 71, lo: 52, rain: '10%',
+  hours: [['3pm','⛅',66],['4pm','⛅',67],['5pm','🌤',65],['6pm','🌤',62],['7pm','🌙',58],['8pm','🌙',56]],
+  days: [['Today','⛅',71,52],['Sat','🌧',63,50],['Sun','🌦',65,49],['Mon','☀️',72,51],['Tue','☀️',74,55]] };
+
+// ── shared bits (tiny — layouts are deliberately NOT shared) ────────────────
+function Avatar({ id, size = 40, ring, dim, onClick, label }) {
+  const m = M[id];
+  const body = m
+    ? <span style={{ fontWeight: 700, fontSize: size * .42, color: '#fff' }}>{m.name[0]}</span>
+    : <span style={{ fontSize: size * .45 }}>👪</span>;
+  const el = (
+    <span style={{ width: size, height: size, borderRadius: '50%', display: 'inline-flex', alignItems: 'center',
+      justifyContent: 'center', flex: 'none', background: m ? m.color : '#64748b', opacity: dim ? .35 : 1,
+      boxShadow: ring ? `0 0 0 4px #fff, 0 0 0 8px ${m ? m.color : '#64748b'}` : 'none', transition: 'all .15s' }}>
+      {body}
+    </span>
+  );
+  return onClick ? <button onClick={onClick} aria-label={label || (m && m.name)}>{el}</button> : el;
+}
+const WhoDots = ({ who, size = 18 }) => (
+  <span style={{ display: 'inline-flex', gap: 3 }}>
+    {who.map(w => <Avatar key={w} id={w === EVERYONE ? null : w} size={size} />)}
+  </span>
+);
+const evColor = ev => ev.who.length === 1 && M[ev.who[0]] ? M[ev.who[0]].color : ev.who.length ? '#64748b' : '#94a3b8';
+const evBg = ev => ev.who.length > 1 && !ev.who.includes(EVERYONE)
+  ? `linear-gradient(90deg, ${ev.who.map(w => M[w].color).join(',')})` : evColor(ev);
+
+function useClock() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
+  return now;
+}
+const clockStr = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+// ── app state + Acting Member rules ─────────────────────────────────────────
+function useHub() {
+  const [data, setData] = useState(INITIAL);
+  const [acting, setActingRaw] = useState(null);
+  const [lastTouch, setLastTouch] = useState(Date.now());
+  const [log, setLog] = useState('—');
+  const [nudge, setNudge] = useState(0);   // bumps when a change is attempted with no Acting Member
+  const now = useClock();
+  const remaining = acting ? Math.max(0, Math.ceil((IDLE_MS - (now - lastTouch)) / 1000)) : 0;
+
+  useEffect(() => { if (acting && remaining === 0) { setActingRaw(null); setLog('Idle 60 s → no Acting Member'); } }, [acting, remaining]);
+  useEffect(() => {
+    const t = () => setLastTouch(Date.now());
+    window.addEventListener('pointerdown', t); window.addEventListener('keydown', t);
+    return () => { window.removeEventListener('pointerdown', t); window.removeEventListener('keydown', t); };
+  }, []);
+
+  const setActing = id => { setActingRaw(id); setLastTouch(Date.now()); setLog(id ? `${M[id].name} is now the Acting Member` : 'Acting Member cleared'); };
+  // change(): run only with an Acting Member; else nudge (variants decide how)
+  const change = (label, fn, asWho) => {
+    const who = asWho || acting;
+    if (!who) { setNudge(n => n + 1); setLog(`Blocked: “${label}” needs an Acting Member`); return false; }
+    setData(d => fn(structuredClone(d), who)); setLog(`${M[who].name}: ${label}`); return true;
+  };
+  const ops = {
+    toggleChore: (cid, as) => change('ticked a Chore', (d, who) => {
+      const c = d.chores.find(c => c.id === cid);
+      c.state = c.state === 'done' ? 'open' : 'done'; c.doneBy = who; return d; }, as),
+    skipChore: (cid, as) => change('skipped a Chore', (d, who) => {
+      const c = d.chores.find(c => c.id === cid); c.state = 'skipped'; c.doneBy = who; return d; }, as),
+    toggleItem: (lid, iid, as) => change('ticked an Item', d => {
+      const it = d.lists.find(l => l.id === lid).items.find(i => i.id === iid); it.got = !it.got; return d; }, as),
+    addItem: (lid, t, as) => change(`added “${t}”`, (d, who) => {
+      d.lists.find(l => l.id === lid).items.unshift({ id: 'i' + Date.now(), t, by: who, got: false }); return d; }, as),
+    clearGot: (lid, as) => change('cleared ticked Items', d => {
+      const l = d.lists.find(l => l.id === lid); l.items = l.items.filter(i => !i.got); return d; }, as),
+    dismissMessage: (mid, as) => change('dismissed a Message', d => { d.messages = d.messages.filter(m => m.id !== mid); return d; }, as),
+    addNote: (t, as) => change('pinned a Note', (d, who) => { d.notes.unshift({ id: 'n' + Date.now(), t, by: who }); return d; }, as),
+    removeNote: (nid, as) => change('unpinned a Note', d => { d.notes = d.notes.filter(n => n.id !== nid); return d; }, as),
+  };
+  return { data, acting, setActing, remaining, now, log, nudge, ops };
+}
+
+// inline "add" field — on the real wall this needs an on-screen keyboard (open question)
+function QuickAdd({ placeholder, onAdd, chips, dark }) {
+  const [v, setV] = useState('');
+  const go = t => { if (t.trim() && onAdd(t.trim()) !== false) setV(''); };
+  return (
+    <div>
+      <form onSubmit={e => { e.preventDefault(); go(v); }} style={{ display: 'flex', gap: 8 }}>
+        <input value={v} onChange={e => setV(e.target.value)} placeholder={placeholder}
+          style={{ flex: 1, padding: '10px 14px', borderRadius: 10, border: '1px solid ' + (dark ? '#334155' : '#cbd5e1'),
+            background: dark ? '#0f172a' : '#fff', color: 'inherit', fontSize: 18 }} />
+        <button style={{ padding: '0 18px', borderRadius: 10, background: dark ? '#334155' : '#0f172a', color: '#fff', fontSize: 22 }}>+</button>
+      </form>
+      {chips && <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+        {chips.map(c => <button key={c} onClick={() => go(c)} style={{ padding: '6px 12px', borderRadius: 999,
+          background: dark ? '#1e293b' : '#e2e8f0', fontSize: 15 }}>+ {c}</button>)}
+      </div>}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VARIANT A — "Calendar wall": week grid dominates, side rail for the rest,
+// avatar row top-right. Tap an avatar first, then act.
+// ═════════════════════════════════════════════════════════════════════════════
+function VariantA({ hub }) {
+  const { data, acting, setActing, remaining, now, ops, nudge } = hub;
+  const [month, setMonth] = useState(false);
+  const [page, setPage] = useState(0);
+  const [list, setList] = useState('l1');
+  const [shake, setShake] = useState(false);
+  useEffect(() => { if (nudge) { setShake(true); const t = setTimeout(() => setShake(false), 700); return () => clearTimeout(t); } }, [nudge]);
+  useEffect(() => { if (!acting) { setPage(0); setMonth(false); } }, [acting]); // snaps back with the idle timer
+  const days = [...Array(7)].map((_, i) => addDays(TODAY, page * 7 + i));
+  const H0 = 7, H1 = 22, PX = 52;
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  const C = { bg: '#f8fafc', panel: '#fff', line: '#e2e8f0', ink: '#0f172a', mute: '#64748b' };
+
+  return (
+    <div style={{ width: 1920, height: 1080, background: C.bg, color: C.ink, display: 'flex', flexDirection: 'column' }}>
+      {/* top bar */}
+      <div style={{ height: 96, display: 'flex', alignItems: 'center', padding: '0 32px', gap: 28, borderBottom: `1px solid ${C.line}`, background: C.panel }}>
+        <div style={{ fontSize: 52, fontWeight: 700, letterSpacing: -1 }}>{clockStr(now)}</div>
+        <div style={{ fontSize: 22, color: C.mute }}>Friday, 2 October</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22 }}>
+          <span style={{ fontSize: 36 }}>{WEATHER.icon}</span><b>{WEATHER.now}°</b>
+          <span style={{ color: C.mute }}>{WEATHER.hi}° / {WEATHER.lo}° · {WEATHER.cond}</span>
+        </div>
+        <div style={{ flex: 1 }} />
+        <div className={shake ? 'shake' : ''} style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+          <span style={{ fontSize: 18, color: acting ? M[acting].color : (shake ? '#dc2626' : C.mute), fontWeight: 600, minWidth: 210, textAlign: 'right' }}>
+            {acting ? `Hi ${M[acting].name} · ${remaining}s` : shake ? 'Tap your avatar first →' : 'Who’s here? Tap your avatar'}
+          </span>
+          {MEMBERS.map(m => <Avatar key={m.id} id={m.id} size={60} ring={acting === m.id} dim={acting && acting !== m.id}
+            onClick={() => setActing(acting === m.id ? null : m.id)} />)}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* calendar */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 20, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <button onClick={() => setPage(p => p - 1)} style={btnA}>‹</button>
+            <button onClick={() => setPage(0)} style={{ ...btnA, width: 'auto', padding: '0 16px', fontSize: 17 }}>Today</button>
+            <button onClick={() => setPage(p => p + 1)} style={btnA}>›</button>
+            <div style={{ fontSize: 22, fontWeight: 600, marginLeft: 8 }}>
+              {month ? 'October 2026' : `${days[0].getDate()} ${MON[days[0].getMonth()]} – ${days[6].getDate()} ${MON[days[6].getMonth()]}`}
+            </div>
+            <div style={{ flex: 1 }} />
+            <div style={{ display: 'flex', background: C.line, borderRadius: 10, padding: 3 }}>
+              {['Week','Month'].map(k => <button key={k} onClick={() => setMonth(k === 'Month')}
+                style={{ padding: '8px 18px', borderRadius: 8, fontSize: 16, background: (k === 'Month') === month ? '#fff' : 'transparent', fontWeight: 600 }}>{k}</button>)}
+            </div>
+          </div>
+          {month ? <MonthGrid C={C} /> : (
+            <div style={{ flex: 1, background: C.panel, borderRadius: 16, border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: `56px repeat(7, 1fr)`, borderBottom: `1px solid ${C.line}` }}>
+                <div />
+                {days.map(d => (
+                  <div key={d} style={{ padding: '10px 8px', borderLeft: `1px solid ${C.line}`, background: sameDay(d, TODAY) ? '#eff6ff' : undefined }}>
+                    <div style={{ fontSize: 15, color: C.mute }}>{DOW[d.getDay()]}</div>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: sameDay(d, TODAY) ? '#2563eb' : C.ink }}>{d.getDate()}</div>
+                    <div style={{ minHeight: 30, display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
+                      {EVENTS.filter(e => e.s === null && sameDay(e.date, d)).map(e => (
+                        <div key={e.id} style={{ fontSize: 13, padding: '3px 6px', borderRadius: 6, background: evBg(e), color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.t}</div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ flex: 1, position: 'relative', display: 'grid', gridTemplateColumns: `56px repeat(7, 1fr)`, overflow: 'hidden' }}>
+                <div>{[...Array(H1 - H0)].map((_, i) => <div key={i} style={{ height: PX, fontSize: 12, color: C.mute, textAlign: 'right', paddingRight: 6, transform: 'translateY(-7px)' }}>{fmtH(H0 + i)}</div>)}</div>
+                {days.map(d => (
+                  <div key={d} style={{ position: 'relative', borderLeft: `1px solid ${C.line}`,
+                    backgroundImage: `repeating-linear-gradient(${C.line} 0 1px, transparent 1px ${PX}px)`, background: sameDay(d, TODAY) ? undefined : undefined }}>
+                    {EVENTS.filter(e => e.s !== null && sameDay(e.date, d)).map(e => (
+                      <div key={e.id} style={{ position: 'absolute', left: 4, right: 4, top: (e.s - H0) * PX + 1, height: (e.e - e.s) * PX - 3,
+                        background: evColor(e) + '22', borderLeft: `5px solid ${evColor(e)}`, borderRadius: 6, padding: '4px 8px', overflow: 'hidden' }}>
+                        <div style={{ fontSize: 15, fontWeight: 600 }}>{e.t}</div>
+                        <div style={{ fontSize: 12, color: C.mute, display: 'flex', gap: 6, alignItems: 'center' }}>{fmtH(e.s)}<WhoDots who={e.who} size={14} /></div>
+                      </div>
+                    ))}
+                    {sameDay(d, TODAY) && nowH > H0 && nowH < H1 &&
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: (nowH - H0) * PX, height: 2, background: '#ef4444' }} />}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* side rail */}
+        <div style={{ width: 560, padding: '20px 24px 20px 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <PanelA title="Messages" C={C}>
+            {data.messages.map(m => (
+              <div key={m.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0' }}>
+                <Avatar id={m.from} size={32} />
+                <div style={{ flex: 1, fontSize: 16 }}><b>{M[m.from].name}</b> → {m.to.map(t => M[t].name).join(', ')}<div>{m.t}</div></div>
+                <button onClick={() => ops.dismissMessage(m.id)} style={{ color: C.mute, fontSize: 20 }}>✕</button>
+              </div>
+            ))}
+          </PanelA>
+          <PanelA title="Chores · today" C={C} flex>
+            {data.chores.filter(c => c.due === 'Today' || c.overdue).map(c => (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 0', opacity: c.state !== 'open' ? .45 : 1 }}>
+                <button onClick={() => ops.toggleChore(c.id)} style={{ width: 34, height: 34, borderRadius: 8, border: `2px solid ${c.who ? M[c.who].color : C.mute}`,
+                  background: c.state === 'done' ? (c.who ? M[c.who].color : C.mute) : '#fff', color: '#fff', fontSize: 20 }}>{c.state === 'done' ? '✓' : ''}</button>
+                <div style={{ flex: 1, fontSize: 18, textDecoration: c.state !== 'open' ? 'line-through' : 'none' }}>
+                  {c.t}{c.by && <span style={{ color: C.mute, fontSize: 14 }}> · by {c.by}</span>}
+                  {c.overdue && c.state === 'open' && <span style={{ color: '#dc2626', fontSize: 14 }}> · yesterday</span>}
+                </div>
+                {c.who ? <Avatar id={c.who} size={28} /> : <span style={{ fontSize: 13, color: C.mute }}>anyone</span>}
+              </div>
+            ))}
+          </PanelA>
+          <PanelA C={C} flex title={
+            <div style={{ display: 'flex', gap: 6 }}>{data.lists.map(l => (
+              <button key={l.id} onClick={() => setList(l.id)} style={{ padding: '4px 12px', borderRadius: 999, fontSize: 15, fontWeight: 600,
+                background: list === l.id ? C.ink : C.line, color: list === l.id ? '#fff' : C.ink }}>{l.name} {l.items.filter(i => !i.got).length}</button>))}</div>}>
+            <QuickAdd placeholder="Add an Item…" onAdd={t => ops.addItem(list, t)} />
+            <div style={{ columns: 2, marginTop: 8 }}>
+              {data.lists.find(l => l.id === list).items.map(i => (
+                <button key={i.id} onClick={() => ops.toggleItem(list, i.id)} style={{ display: 'flex', gap: 8, width: '100%', textAlign: 'left', padding: '5px 0', fontSize: 17, opacity: i.got ? .4 : 1, textDecoration: i.got ? 'line-through' : 'none' }}>
+                  <span>{i.got ? '☑' : '☐'}</span>{i.t}{i.q && <span style={{ color: C.mute }}>×{i.q}</span>}
+                </button>))}
+            </div>
+          </PanelA>
+          <PanelA title="Notes" C={C}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {data.notes.map(n => <div key={n.id} style={{ background: '#fef9c3', padding: '8px 12px', borderRadius: 8, fontSize: 15, maxWidth: 250 }}>{n.t}</div>)}
+            </div>
+          </PanelA>
+        </div>
+      </div>
+    </div>
+  );
+}
+const btnA = { width: 44, height: 44, borderRadius: 10, background: '#e2e8f0', fontSize: 24 };
+const PanelA = ({ title, children, C, flex }) => (
+  <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 16, padding: '14px 18px', flex: flex ? 1 : 'none', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ fontSize: 15, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: C.mute, marginBottom: 8 }}>{title}</div>
+    <div style={{ overflow: 'hidden' }}>{children}</div>
+  </div>
+);
+function MonthGrid({ C, dark }) {
+  const first = new Date(2026, 9, 1), start = addDays(first, -((first.getDay() + 6) % 7));
+  return (
+    <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gridAutoRows: '1fr', gap: 4 }}>
+      {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => <div key={d} style={{ fontSize: 14, color: C.mute, padding: 4, alignSelf: 'end' }}>{d}</div>)}
+      {[...Array(35)].map((_, i) => { const d = addDays(start, i); const evs = EVENTS.filter(e => sameDay(e.date, d));
+        return (
+          <div key={i} style={{ background: C.panel, borderRadius: 10, padding: 8, opacity: d.getMonth() === 9 ? 1 : .4, outline: sameDay(d, TODAY) ? '3px solid #3b82f6' : 'none', overflow: 'hidden' }}>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{d.getDate()}</div>
+            {evs.slice(0, 3).map(e => <div key={e.id} style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', gap: 4, alignItems: 'center' }}>
+              <span style={{ width: 8, height: 8, borderRadius: 4, background: evColor(e), flex: 'none' }} />{e.t}</div>)}
+            {evs.length > 3 && <div style={{ fontSize: 12, color: C.mute }}>+{evs.length - 3} more</div>}
+          </div>); })}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VARIANT B — "Member columns": one column per Member plus Household, each
+// showing that Member's day (events, Chores, Messages to them). Tap a column's
+// header to act as them. Week calendar is a separate screen.
+// ═════════════════════════════════════════════════════════════════════════════
+function VariantB({ hub }) {
+  const { data, acting, setActing, remaining, now, ops, nudge } = hub;
+  const [screen, setScreen] = useState('today');
+  const [shake, setShake] = useState(false);
+  useEffect(() => { if (nudge) { setShake(true); const t = setTimeout(() => setShake(false), 700); return () => clearTimeout(t); } }, [nudge]);
+  useEffect(() => { if (!acting) setScreen('today'); }, [acting]);
+  const C = { bg: '#0b1020', panel: '#151b2e', line: '#252d45', ink: '#e5e7eb', mute: '#8b93a7' };
+  const todays = EVENTS.filter(e => sameDay(e.date, TODAY)).sort((a, b) => (a.s ?? -1) - (b.s ?? -1));
+  const cols = [...MEMBERS.map(m => m.id), EVERYONE];
+
+  return (
+    <div style={{ width: 1920, height: 1080, background: C.bg, color: C.ink, display: 'flex', flexDirection: 'column', padding: 28, gap: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 32 }}>
+        <div>
+          <div style={{ fontSize: 88, fontWeight: 200, lineHeight: .9, letterSpacing: -3 }}>{clockStr(now)}</div>
+          <div style={{ fontSize: 26, color: C.mute, marginTop: 6 }}>Friday 2 October</div>
+        </div>
+        <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', marginLeft: 24 }}>
+          {WEATHER.days.map(([d, ic, hi, lo], i) => (
+            <div key={d} style={{ textAlign: 'center', opacity: i ? .7 : 1 }}>
+              <div style={{ fontSize: i ? 32 : 54 }}>{ic}</div>
+              <div style={{ fontSize: i ? 18 : 28, fontWeight: 600 }}>{i ? `${hi}°` : `${WEATHER.now}°`}</div>
+              <div style={{ fontSize: 14, color: C.mute }}>{i ? d : `${hi}°/${lo}°`}</div>
+            </div>))}
+        </div>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', background: C.panel, borderRadius: 14, padding: 4 }}>
+          {[['today','Today'],['week','Week'],['lists','Lists & Notes']].map(([k, l]) => (
+            <button key={k} onClick={() => setScreen(k)} style={{ padding: '14px 26px', borderRadius: 10, fontSize: 20, fontWeight: 600,
+              background: screen === k ? '#334155' : 'transparent' }}>{l}</button>))}
+        </div>
+      </div>
+
+      {screen === 'today' && (
+        <div className={shake ? 'shake' : ''} style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, minHeight: 0 }}>
+          {cols.map(id => {
+            const m = M[id]; const me = acting === id;
+            const evs = todays.filter(e => id === EVERYONE ? (e.who.includes(EVERYONE) || e.who.length === 0) : e.who.includes(id));
+            const chores = data.chores.filter(c => (id === EVERYONE ? !c.who : c.who === id) && (c.due === 'Today' || c.overdue));
+            const msgs = id === EVERYONE ? [] : data.messages.filter(x => x.to.includes(id));
+            return (
+              <div key={id} style={{ background: C.panel, borderRadius: 20, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                outline: me ? `4px solid ${m.color}` : 'none', opacity: acting && !me && id !== EVERYONE ? .55 : 1, transition: 'all .15s' }}>
+                <button onClick={() => id !== EVERYONE && setActing(me ? null : id)} disabled={id === EVERYONE}
+                  style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', background: m ? m.color + (me ? '' : '33') : '#1e293b', textAlign: 'left', cursor: m ? 'pointer' : 'default' }}>
+                  <Avatar id={m ? id : null} size={56} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 26, fontWeight: 700 }}>{m ? m.name : 'Household'}</div>
+                    <div style={{ fontSize: 15, opacity: .85 }}>{m ? (me ? `Acting · ${remaining}s · tap to stop` : 'Tap to act as ' + m.name) : 'Everyone & anyone'}</div>
+                  </div>
+                </button>
+                <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'hidden' }}>
+                  {msgs.map(x => (
+                    <div key={x.id} style={{ background: '#fde68a', color: '#422006', borderRadius: 12, padding: '10px 12px', fontSize: 17, position: 'relative' }}>
+                      <div style={{ fontSize: 13, opacity: .7 }}>from {M[x.from].name} · {x.at}</div>{x.t}
+                      <button onClick={() => ops.dismissMessage(x.id, me ? id : undefined)} style={{ position: 'absolute', top: 6, right: 10, fontSize: 16 }}>✕</button>
+                    </div>))}
+                  <Lbl C={C}>Today</Lbl>
+                  {evs.length === 0 && <div style={{ color: C.mute, fontSize: 16 }}>Nothing on</div>}
+                  {evs.map(e => (
+                    <div key={e.id} style={{ display: 'flex', gap: 10, fontSize: 18 }}>
+                      <span style={{ width: 72, color: C.mute, flex: 'none' }}>{e.s === null ? 'all day' : fmtH(e.s)}</span>
+                      <span style={{ fontWeight: 600 }}>{e.t}{e.who.length > 1 && id !== EVERYONE && <span style={{ marginLeft: 6 }}><WhoDots who={e.who.filter(w => w !== id)} size={16} /></span>}</span>
+                    </div>))}
+                  <Lbl C={C}>Chores</Lbl>
+                  {chores.length === 0 && <div style={{ color: C.mute, fontSize: 16 }}>All clear ✨</div>}
+                  {chores.map(c => (
+                    <button key={c.id} onClick={() => ops.toggleChore(c.id, me || id === EVERYONE ? undefined : undefined)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', padding: '10px 12px', borderRadius: 12,
+                        background: c.state === 'done' ? '#14532d' : '#1e293b', fontSize: 18 }}>
+                      <span style={{ fontSize: 24 }}>{c.state === 'done' ? '✅' : '⬜'}</span>
+                      <span style={{ flex: 1, textDecoration: c.state === 'done' ? 'line-through' : 'none' }}>{c.t}
+                        {c.by && <div style={{ fontSize: 13, color: C.mute }}>by {c.by}</div>}
+                        {c.overdue && c.state === 'open' && <div style={{ fontSize: 13, color: '#f87171' }}>missed yesterday</div>}
+                        {c.state === 'done' && c.doneBy && <div style={{ fontSize: 13, color: '#86efac' }}>done by {M[c.doneBy].name}</div>}
+                      </span>
+                    </button>))}
+                </div>
+              </div>);
+          })}
+        </div>
+      )}
+      {screen === 'week' && (
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 12 }}>
+          {[...Array(7)].map((_, i) => { const d = addDays(TODAY, i);
+            return (
+              <div key={i} style={{ background: C.panel, borderRadius: 18, padding: 16, display: 'flex', flexDirection: 'column', gap: 8, outline: i === 0 ? '3px solid #60a5fa' : 'none' }}>
+                <div style={{ fontSize: 18, color: C.mute }}>{DOW[d.getDay()]}</div>
+                <div style={{ fontSize: 36, fontWeight: 700, marginBottom: 6 }}>{d.getDate()}</div>
+                {EVENTS.filter(e => sameDay(e.date, d)).sort((a, b) => (a.s ?? -1) - (b.s ?? -1)).map(e => (
+                  <div key={e.id} style={{ borderLeft: `5px solid ${evColor(e)}`, background: '#1e293b', borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 14, color: C.mute }}>{e.s === null ? 'All day' : `${fmtH(e.s)}–${fmtH(e.e)}`}</div>
+                    <div style={{ fontSize: 17, fontWeight: 600 }}>{e.t}</div>
+                    <div style={{ marginTop: 4 }}><WhoDots who={e.who} size={18} /></div>
+                  </div>))}
+              </div>); })}
+        </div>
+      )}
+      {screen === 'lists' && (
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1.1fr', gap: 16 }}>
+          {data.lists.map(l => (
+            <div key={l.id} style={{ background: C.panel, borderRadius: 18, padding: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>{l.name}</div>
+              <QuickAdd dark placeholder={`Add to ${l.name}…`} onAdd={t => ops.addItem(l.id, t)} chips={l.id === 'l1' ? ['Milk','Bread','Eggs','Apples'] : null} />
+              {l.items.map(i => (
+                <button key={i.id} onClick={() => ops.toggleItem(l.id, i.id)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', fontSize: 20, textAlign: 'left', opacity: i.got ? .4 : 1, borderBottom: `1px solid ${C.line}` }}>
+                  <span>{i.got ? '☑' : '☐'}</span><span style={{ flex: 1, textDecoration: i.got ? 'line-through' : 'none' }}>{i.t} {i.q && <span style={{ color: C.mute }}>×{i.q}</span>}</span><Avatar id={i.by} size={24} />
+                </button>))}
+              {l.items.some(i => i.got) && <button onClick={() => ops.clearGot(l.id)} style={{ color: C.mute, fontSize: 16, alignSelf: 'flex-start' }}>Clear ticked</button>}
+            </div>))}
+          <div style={{ background: '#1c1a10', borderRadius: 18, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 28, fontWeight: 700 }}>📌 Notes</div>
+            <QuickAdd dark placeholder="Pin a Note…" onAdd={t => ops.addNote(t)} />
+            {data.notes.map(n => (
+              <div key={n.id} style={{ background: '#fef08a', color: '#422006', padding: '12px 14px', borderRadius: 10, fontSize: 19, display: 'flex', gap: 10 }}>
+                <span style={{ flex: 1 }}>{n.t}</span><Avatar id={n.by} size={24} />
+                <button onClick={() => ops.removeNote(n.id)}>✕</button>
+              </div>))}
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize: 13, color: C.mute, textAlign: 'right', marginTop: -10 }}>Weather data by Open-Meteo.com (CC BY 4.0)</div>
+    </div>
+  );
+}
+const Lbl = ({ children, C }) => <div style={{ fontSize: 13, letterSpacing: 1.5, textTransform: 'uppercase', color: C.mute, marginTop: 6 }}>{children}</div>;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VARIANT C — "Glance home + drill-in": a calm ambient home (clock, weather,
+// today's agenda, up-next) with a dock of big tiles that open full-screen
+// panels. No avatar to tap first: the first change asks "Who's this?".
+// ═════════════════════════════════════════════════════════════════════════════
+function VariantC({ hub }) {
+  const { data, acting, setActing, remaining, now, ops } = hub;
+  const [panel, setPanel] = useState(null);
+  const [ask, setAsk] = useState(null); // pending change waiting for "Who's this?"
+  useEffect(() => { if (!acting) setPanel(null); }, [acting]);
+  // wrap an op so that with no Acting Member we ask first, then run it as the chosen Member
+  const act = (opName, ...args) => () => {
+    if (acting) return ops[opName](...args);
+    setAsk({ opName, args });
+  };
+  const actVal = (opName, ...args) => v => { if (acting) return ops[opName](...args, v); setAsk({ opName, args: [...args, v] }); return true; };
+  const choose = id => { setActing(id); if (ask) { const { opName, args } = ask;
+    // ops take an optional trailing "as" Member; for addItem/addNote the value is already in args
+    ops[opName](...args, id); } setAsk(null); };
+  const todays = EVENTS.filter(e => sameDay(e.date, TODAY)).sort((a, b) => (a.s ?? -1) - (b.s ?? -1));
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  const openChores = data.chores.filter(c => c.state === 'open');
+  const g = '#f4efe6', ink = '#2b2620', mute = '#8a8174';
+
+  const tiles = [
+    ['cal', '📅', 'Calendar', `${todays.length} today`],
+    ['chores', '🧹', 'Chores', `${openChores.filter(c => c.due === 'Today' || c.overdue).length} left today`],
+    ['shop', '🛒', 'Shopping', `${data.lists.reduce((n, l) => n + l.items.filter(i => !i.got).length, 0)} Items`],
+    ['board', '📌', 'Board', `${data.messages.length} Messages · ${data.notes.length} Notes`],
+  ];
+
+  return (
+    <div style={{ width: 1920, height: 1080, background: g, color: ink, position: 'relative', fontFamily: 'Georgia, "Iowan Old Style", serif' }}>
+      {/* home */}
+      <div style={{ position: 'absolute', inset: 0, padding: '56px 72px 220px', display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 72 }}>
+        <div>
+          <div style={{ fontSize: 180, lineHeight: .9, letterSpacing: -6 }}>{clockStr(now)}</div>
+          <div style={{ fontSize: 40, marginTop: 18, color: mute }}>Friday, the 2nd of October</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginTop: 48 }}>
+            <span style={{ fontSize: 110 }}>{WEATHER.icon}</span>
+            <div>
+              <div style={{ fontSize: 72 }}>{WEATHER.now}°</div>
+              <div style={{ fontSize: 26, color: mute }}>{WEATHER.cond} · {WEATHER.hi}°/{WEATHER.lo}° · rain {WEATHER.rain}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 36, marginTop: 32, fontFamily: 'system-ui' }}>
+            {WEATHER.hours.map(([h, ic, t]) => <div key={h} style={{ textAlign: 'center', fontSize: 20 }}><div style={{ color: mute }}>{h}</div><div style={{ fontSize: 30 }}>{ic}</div><div>{t}°</div></div>)}
+          </div>
+          {data.notes[0] && <div style={{ marginTop: 44, fontSize: 28, fontStyle: 'italic', color: mute }}>📌 “{data.notes[0].t}”</div>}
+        </div>
+        <div style={{ fontFamily: 'system-ui' }}>
+          <div style={{ fontSize: 22, letterSpacing: 3, textTransform: 'uppercase', color: mute, marginBottom: 18 }}>Today</div>
+          {todays.map(e => { const past = e.e && e.e < nowH;
+            return (
+              <div key={e.id} style={{ display: 'flex', gap: 22, alignItems: 'center', padding: '14px 0', borderBottom: '1px solid #e2d9c9', opacity: past ? .4 : 1 }}>
+                <div style={{ width: 110, fontSize: 24, color: mute }}>{e.s === null ? 'All day' : fmtH(e.s)}</div>
+                <div style={{ width: 8, alignSelf: 'stretch', borderRadius: 4, background: evBg(e) }} />
+                <div style={{ flex: 1, fontSize: 30 }}>{e.t}{e.loc && <span style={{ fontSize: 20, color: mute }}> · {e.loc}</span>}</div>
+                <WhoDots who={e.who} size={30} />
+              </div>); })}
+          <div style={{ fontSize: 22, letterSpacing: 3, textTransform: 'uppercase', color: mute, margin: '40px 0 14px' }}>Up next · tomorrow</div>
+          {EVENTS.filter(e => e.d === 1).map(e => <div key={e.id} style={{ fontSize: 24, padding: '6px 0', color: mute }}>{fmtH(e.s)} — {e.t}</div>)}
+        </div>
+      </div>
+      {/* dock */}
+      <div style={{ position: 'absolute', left: 72, right: 72, bottom: 56, height: 140, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 24, fontFamily: 'system-ui' }}>
+        {tiles.map(([k, ic, l, sub]) => (
+          <button key={k} onClick={() => setPanel(k)} style={{ background: '#fff', borderRadius: 28, display: 'flex', alignItems: 'center', gap: 22, padding: '0 30px', textAlign: 'left', boxShadow: '0 2px 0 #e2d9c9' }}>
+            <span style={{ fontSize: 60 }}>{ic}</span>
+            <span><div style={{ fontSize: 32, fontWeight: 600 }}>{l}</div><div style={{ fontSize: 20, color: mute }}>{sub}</div></span>
+          </button>))}
+      </div>
+      {acting && (
+        <button onClick={() => setActing(null)} style={{ position: 'absolute', top: 28, right: 36, zIndex: 30, display: 'flex', alignItems: 'center', gap: 12, background: '#fff', borderRadius: 999, padding: '8px 18px 8px 8px', fontFamily: 'system-ui', fontSize: 20, boxShadow: '0 4px 16px rgba(0,0,0,.12)' }}>
+          <Avatar id={acting} size={44} /> {M[acting].name} <span style={{ color: mute }}>· {remaining}s · I'm done ✕</span>
+        </button>)}
+
+      {/* drill-in panels */}
+      {panel && (
+        <div className="pop" style={{ position: 'absolute', inset: 0, background: g, zIndex: 20, padding: '40px 72px', fontFamily: 'system-ui', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
+            <button onClick={() => setPanel(null)} style={{ fontSize: 26, background: '#fff', borderRadius: 999, padding: '14px 28px' }}>‹ Home</button>
+            <div style={{ fontSize: 44, fontFamily: 'Georgia, serif' }}>{tiles.find(t => t[0] === panel)[2]}</div>
+          </div>
+          {panel === 'cal' && <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}><MonthGrid C={{ panel: '#fff', mute }} /></div>}
+          {panel === 'chores' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+              {data.chores.map(c => (
+                <div key={c.id} style={{ background: '#fff', borderRadius: 24, padding: 24, display: 'flex', flexDirection: 'column', gap: 14, opacity: c.state !== 'open' ? .5 : 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    {c.who ? <Avatar id={c.who} size={48} /> : <Avatar id={null} size={48} />}
+                    <div style={{ flex: 1 }}><div style={{ fontSize: 28, fontWeight: 600 }}>{c.t}</div>
+                      <div style={{ fontSize: 18, color: c.overdue && c.state === 'open' ? '#b91c1c' : mute }}>{c.due}{c.by ? ` by ${c.by}` : ''} · {c.who ? M[c.who].name : 'anyone'}</div></div>
+                  </div>
+                  {c.state === 'open' ? (
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <button onClick={act('toggleChore', c.id)} style={{ flex: 1, padding: 18, borderRadius: 16, background: '#2b2620', color: '#fff', fontSize: 22 }}>✓ Done</button>
+                      <button onClick={act('skipChore', c.id)} style={{ padding: 18, borderRadius: 16, background: '#ece5d8', fontSize: 22 }}>Skip</button>
+                    </div>
+                  ) : <div style={{ fontSize: 20 }}>{c.state === 'done' ? '✅ Done' : '⏭ Skipped'}{c.doneBy ? ` by ${M[c.doneBy].name}` : ''}</div>}
+                </div>))}
+            </div>)}
+          {panel === 'shop' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 24 }}>
+              {data.lists.map(l => (
+                <div key={l.id} style={{ background: '#fff', borderRadius: 24, padding: 24 }}>
+                  <div style={{ fontSize: 30, fontWeight: 600, marginBottom: 12 }}>{l.name}</div>
+                  <QuickAdd placeholder="Add an Item…" onAdd={actVal('addItem', l.id)} chips={l.id === 'l1' ? ['Milk','Bread','Eggs'] : null} />
+                  {l.items.map(i => (
+                    <button key={i.id} onClick={act('toggleItem', l.id, i.id)} style={{ display: 'flex', gap: 14, width: '100%', textAlign: 'left', padding: '14px 0', fontSize: 24, borderBottom: '1px solid #eee', opacity: i.got ? .4 : 1, textDecoration: i.got ? 'line-through' : 'none' }}>
+                      {i.got ? '☑' : '☐'} <span style={{ flex: 1 }}>{i.t}{i.q ? ` ×${i.q}` : ''}</span><Avatar id={i.by} size={26} />
+                    </button>))}
+                </div>))}
+            </div>)}
+          {panel === 'board' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40 }}>
+              <div>
+                <div style={{ fontSize: 22, letterSpacing: 3, textTransform: 'uppercase', color: mute, marginBottom: 14 }}>Messages</div>
+                {data.messages.map(m => (
+                  <div key={m.id} style={{ background: '#fff', borderRadius: 20, padding: 20, display: 'flex', gap: 16, alignItems: 'center', marginBottom: 14 }}>
+                    <Avatar id={m.from} size={48} />
+                    <div style={{ flex: 1 }}><div style={{ fontSize: 18, color: mute }}>{M[m.from].name} → {m.to.map(t => M[t].name).join(', ')} · {m.at}</div><div style={{ fontSize: 26 }}>{m.t}</div></div>
+                    <button onClick={act('dismissMessage', m.id)} style={{ fontSize: 22, color: mute }}>Seen ✓</button>
+                  </div>))}
+              </div>
+              <div>
+                <div style={{ fontSize: 22, letterSpacing: 3, textTransform: 'uppercase', color: mute, marginBottom: 14 }}>Notes</div>
+                <QuickAdd placeholder="Pin a Note…" onAdd={actVal('addNote')} />
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 16 }}>
+                  {data.notes.map((n, i) => (
+                    <div key={n.id} style={{ background: '#fde68a', width: 260, minHeight: 160, padding: 18, fontSize: 22, transform: `rotate(${(i % 3 - 1) * 1.5}deg)`, boxShadow: '0 3px 8px rgba(0,0,0,.1)', position: 'relative' }}>
+                      {n.t}<div style={{ position: 'absolute', bottom: 10, right: 12 }}><Avatar id={n.by} size={26} /></div>
+                    </div>))}
+                </div>
+              </div>
+            </div>)}
+        </div>
+      )}
+
+      {/* Who's this? sheet */}
+      {ask && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(43,38,32,.55)', zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui' }} onClick={() => setAsk(null)}>
+          <div className="pop" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 36, padding: '48px 64px', textAlign: 'center' }}>
+            <div style={{ fontSize: 44, fontFamily: 'Georgia, serif', marginBottom: 36 }}>Who’s this?</div>
+            <div style={{ display: 'flex', gap: 48 }}>
+              {MEMBERS.map(m => <button key={m.id} onClick={() => choose(m.id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, fontSize: 26 }}>
+                <Avatar id={m.id} size={130} />{m.name}</button>)}
+            </div>
+            <button onClick={() => setAsk(null)} style={{ marginTop: 36, fontSize: 20, color: mute }}>Cancel</button>
+          </div>
+        </div>)}
+      <div style={{ position: 'absolute', bottom: 18, right: 72, fontSize: 13, color: mute, fontFamily: 'system-ui' }}>Weather data by Open-Meteo.com (CC BY 4.0)</div>
+    </div>
+  );
+}
+
+// ── switcher + stage ────────────────────────────────────────────────────────
+const VARIANTS = [
+  ['A', 'Calendar wall', VariantA],
+  ['B', 'Member columns', VariantB],
+  ['C', 'Glance home + drill-in', VariantC],
+];
+function App() {
+  const hub = useHub();
+  const [v, setV] = useState(() => { const p = new URLSearchParams(location.search).get('variant'); return VARIANTS.some(x => x[0] === p) ? p : 'A'; });
+  const [scale, setScale] = useState(1);
+  useEffect(() => { const f = () => setScale(Math.min(innerWidth / 1920, (innerHeight - 60) / 1080)); f(); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
+  const go = useCallback(d => setV(cur => { const i = VARIANTS.findIndex(x => x[0] === cur); const n = VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length][0];
+    const u = new URL(location); u.searchParams.set('variant', n); history.replaceState(null, '', u); return n; }), []);
+  useEffect(() => { const k = e => { if (e.target.closest('input,textarea,[contenteditable]')) return;
+    if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1); }; addEventListener('keydown', k); return () => removeEventListener('keydown', k); }, [go]);
+  const [key, name, Comp] = VARIANTS.find(x => x[0] === v);
+  return (
+    <>
+      <div id="stage" style={{ transform: `translate(-50%, calc(-50% - 24px)) scale(${scale})` }}><Comp hub={hub} /></div>
+      <div className="switcher">
+        <button onClick={() => go(-1)}>←</button>
+        <span>{key} — {name}</span>
+        <button onClick={() => go(1)}>→</button>
+        <span className="state">Acting: {hub.acting ? `${M[hub.acting].name} (${hub.remaining}s)` : 'none'} · {hub.log}</span>
+      </div>
+    </>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
