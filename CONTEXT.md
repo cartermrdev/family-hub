@@ -20,17 +20,25 @@ _Avoid_: Parent, admin, owner
 A Member without Household-management rights, who can otherwise do everything an Adult can.
 _Avoid_: Child, kid, restricted user
 
+**Sign-in Code**:
+A short, single-use code an Adult issues so a Member can sign in on a new phone; it expires after 24 hours.
+_Avoid_: Invite, OTP, password
+
 **Wall Display**:
 The shared, always-on screen in a central spot in the house, which shows the dashboard and accepts touch input.
 _Avoid_: Kiosk, tablet, hub screen
 
 **Acting Member**:
-The Member who tapped their avatar on the Wall Display, and so is credited with what is done there until the next tap.
+The Member who tapped their avatar on the Wall Display, and so is credited with what is done there until another avatar is tapped or the Wall Display sits idle for about a minute, after which there is no Acting Member. Anyone can view the Wall Display, but making a change needs an Acting Member.
 _Avoid_: Current user, session, logged-in user
 
 **Family Calendar**:
 The Household's shared iCloud calendar, which Members can create and edit events on through the hub.
 _Avoid_: Shared calendar, home calendar
+
+**Event Member**:
+A Member an event on the Family Calendar is for; an event can have none, one, several, or Everyone.
+_Avoid_: Attendee, invitee, owner, tag
 
 **Linked Calendar**:
 An external calendar (such as a Member's Google or work Outlook calendar) that the hub shows but never changes.
