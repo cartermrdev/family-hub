@@ -243,6 +243,7 @@ function VariantA({ hub }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22 }}>
           <span style={{ fontSize: 36 }}>{WEATHER.icon}</span><b>{WEATHER.now}°</b>
           <span style={{ color: C.mute }}>{WEATHER.hi}° / {WEATHER.lo}° · {WEATHER.cond}</span>
+          <span style={{ fontSize: 11, color: C.mute, alignSelf: 'flex-end', marginBottom: 6 }}>Open-Meteo.com (CC BY 4.0)</span>
         </div>
         <div style={{ flex: 1 }} />
         <div className={shake ? 'shake' : ''} style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
