@@ -1,0 +1,146 @@
+# SSSF starter recipes. Stamped by install.py, then yours to edit.
+#
+# Deliberately small. These are the handful you need on day one: run something,
+# watch it, and open the trace. Add your own as your chains grow, and see the
+# example branch for the fuller set (orchestrator agents, kill, rosters, ipi).
+
+# `.env` reaches every ADW through this, so keys work without exporting them.
+set dotenv-load
+set positional-arguments
+
+# Windows: run recipes with Git's own sh, wherever Git is installed. A setting
+# cannot compute a path, but a git shell alias (`!sh`) always runs Git's bundled
+# sh, so `git` on PATH is the only requirement — no Git Bash, no sh on PATH.
+# Git runs shell aliases from the repo's top level; this justfile lives there.
+# macOS and Linux ignore this line and use their own sh.
+set windows-shell := ["git", "-c", "alias.sssf-sh=!sh", "sssf-sh", "-cu"]
+
+# Python's UTF-8 mode, so nothing an ADW reads, writes or decodes falls back to
+# the locale encoding (cp1252 on Windows) and dies on a `−` in an issue body.
+# The modules name utf-8 on every file and subprocess; this backs up the rest
+# (yaml, dotenv, anything an ADW you write adds).
+export PYTHONUTF8 := "1"
+
+# Every recipe passes this through, so `SSSF_CONFIG=other.yaml just sdlc "..."`
+# swaps the whole roster for one run.
+config := env_var_or_default("SSSF_CONFIG", "adws/adw_sssf_config/sssf.config.yaml")
+db     := "adws/adw_data/sssf.db"
+
+# list every recipe
+default:
+    @just --list
+
+# ── first run ───────────────────────────────────────────────────────────────
+
+# Proves the whole path works: config validated, session minted, agent ran,
+# envelope parsed, gates checked, trace written. Costs a few cents and changes
+# nothing in your repo, because both workflows are read-only.
+#
+# (`just --list` shows only the LAST comment line, so that one is the summary.)
+
+# start here: two cheap read-only runs, end to end
+demo:
+    @echo "1/2  adw_prompt: one agent, one prompt"
+    uv run adws/adw_prompt.py --config {{config}} --agent scout "reply with a one-line summary of this repo"
+    @printf '\n2/2  adw_scout: read-only recon\n'
+    uv run adws/adw_scout.py --config {{config}} "list the top-level directories in this repo and what each is for. change nothing."
+    @printf '\nboth done. now run:  just sessions    (or: just console)\n'
+
+# ── run a workflow ──────────────────────────────────────────────────────────
+# Args pass straight through: "<prompt or path/to/prompt.md>" [--adw-id X]
+# Committing ones also take --merge | --pr, or --in-place [--allow-dirty].
+# A GitHub issue is a prompt too: just sdlc "#42" — quoted, or # starts a
+# comment. It must be labelled ready-for-agent, and lands as a PR closing it.
+
+# one agent, one prompt: just prompt "summarize this repo"
+prompt *ARGS:
+    uv run adws/adw_prompt.py --config {{config}} "$@"
+
+# read-only recon: just scout "where is auth handled"
+scout *ARGS:
+    uv run adws/adw_scout.py --config {{config}} "$@"
+
+# plan only: just plan "add a /health endpoint"
+plan *ARGS:
+    uv run adws/adw_plan.py --config {{config}} "$@"
+
+# planner, builder, commit: just plan-build "add a /health endpoint"
+plan-build *ARGS:
+    uv run adws/adw_plan_build.py --config {{config}} "$@"
+
+# plan, build, test, commit: just sdlc "add a /health endpoint"
+sdlc *ARGS:
+    uv run adws/adw_plan_build_test.py --config {{config}} "$@"
+
+# the full chain, plus review and docs: just simple-sdlc "add a /health endpoint"
+simple-sdlc *ARGS:
+    uv run adws/adw_simple_sdlc.py --config {{config}} "$@"
+
+# ── watch it ────────────────────────────────────────────────────────────────
+# Reads never block a running workflow, the db is WAL. Poll as hard as you like.
+
+# the last 10 runs
+sessions:
+    @sqlite3 {{db}} "select adw_id, status, substr(request,1,50), total_tokens, round(total_cost,4) from sessions order by started_at desc limit 10;"
+
+# phase status in sequence: just phases <adw_id>
+phases ADW_ID:
+    @sqlite3 {{db}} "select seq, name, kind, owner, status, attempt from phases where adw_id='{{ADW_ID}}' order by seq;"
+
+# the live event tail: just tail <adw_id>
+tail ADW_ID:
+    @sqlite3 {{db}} "select rowid, type, name, started_at from events where adw_id='{{ADW_ID}}' order by rowid desc limit 25;"
+
+# what a run has alive right now, with pids: just procs <adw_id>
+procs ADW_ID:
+    @sqlite3 {{db}} "select kind, name, pid, command, started_at from processes where adw_id='{{ADW_ID}}' and ended_at is null order by id;"
+
+# ── worktrees ───────────────────────────────────────────────────────────────
+# Committing workflows run in ../<repo>.sssf-worktrees/<adw_id> on branch
+# sssf/<adw_id>. A successful run removes its worktree; a failed one keeps it.
+
+# every worktree, with its branch
+worktrees:
+    @git worktree list
+
+# remove a run's worktree; its branch and commits stay: just worktree-rm <adw_id>
+worktree-rm ADW_ID:
+    git worktree remove --force '{{parent_directory(justfile_directory())}}/{{file_name(justfile_directory())}}.sssf-worktrees/{{ADW_ID}}'
+
+# ── sssf itself ─────────────────────────────────────────────────────────────
+# Takes a newer sssf from where this repo's came from (adws/.sssf_stamp.json):
+# the recorded path, else its git URL. sssf's code is replaced where you have
+# not edited it, and an edit stops the update before anything is written. Your
+# config, prompts and edits are kept. Start clean; review with `git diff`.
+
+# update sssf's code from where it was installed: just sssf-update [--source <path|git url>]
+sssf-update *ARGS:
+    uv run adws/adw_modules/sssf_update.py "$@"
+
+# ── the Console ─────────────────────────────────────────────────────────────
+
+# Needs bun. The UI is built into dist/ and ONE server process serves it. It
+# runs in the background, so your terminal stays free; `console-stop` ends it
+# by asking the server for its own pid (server/background.ts), so nothing is
+# left behind. The db path is passed explicitly because the server runs from
+# the app dir and would otherwise look for a trace db sitting next to itself.
+# It is single-quoted because on Windows it is a C:\... path, and sh eats
+# unquoted \.
+console_app := ".claude/skills/sssf/apps/console"
+
+# start the Console in the background, http://localhost:4600
+console:
+    @cd {{console_app}} && bun install --silent && bun run server/background.ts start --db '{{justfile_directory()}}/{{db}}'
+
+# stop the background Console
+console-stop:
+    @cd {{console_app}} && bun run server/background.ts stop
+
+# is the Console running, and on which db
+console-status:
+    @cd {{console_app}} && bun run server/background.ts status
+
+# The Console's names before the rename, kept for one release.
+alias obs := console
+alias obs-stop := console-stop
+alias obs-status := console-status
