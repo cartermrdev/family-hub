@@ -666,11 +666,263 @@ function VariantC({ hub }) {
   );
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// VARIANT D — the mix: A's week grid as the main view with only Messages and
+// Chores beside it; a toggle swaps the main area to B's Member columns; C-style
+// drill-down buttons open full-screen Shopping / Notes / all Chores panels.
+// Acting Member: tap an avatar in the top bar, or just try a change and get
+// C's "Who's this?" sheet.
+// ═════════════════════════════════════════════════════════════════════════════
+function VariantD({ hub }) {
+  const { data, acting, setActing, remaining, now, ops } = hub;
+  const [view, setView] = useState('week');
+  const [month, setMonth] = useState(false);
+  const [page, setPage] = useState(0);
+  const [panel, setPanel] = useState(null);
+  const [ask, setAsk] = useState(null);
+  useEffect(() => { if (!acting) { setView('week'); setMonth(false); setPage(0); setPanel(null); } }, [acting]);
+  const act = (opName, ...args) => () => { if (acting) return ops[opName](...args); setAsk({ opName, args }); };
+  const actVal = (opName, ...args) => v => { if (acting) return ops[opName](...args, v); setAsk({ opName, args: [...args, v] }); return true; };
+  const choose = id => { setActing(id); if (ask) ops[ask.opName](...ask.args, id); setAsk(null); };
+
+  const C = { bg: '#f8fafc', panel: '#fff', line: '#e2e8f0', ink: '#0f172a', mute: '#64748b' };
+  const days = [...Array(7)].map((_, i) => addDays(TODAY, page * 7 + i));
+  const H0 = 7, H1 = 22, PX = 52;
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  const todays = EVENTS.filter(e => sameDay(e.date, TODAY)).sort((a, b) => (a.s ?? -1) - (b.s ?? -1));
+  const todayChores = data.chores.filter(c => c.due === 'Today' || c.overdue);
+  const itemsLeft = data.lists.reduce((n, l) => n + l.items.filter(i => !i.got).length, 0);
+  const seg = (on) => ({ padding: '10px 20px', borderRadius: 8, fontSize: 17, fontWeight: 600, background: on ? '#fff' : 'transparent', boxShadow: on ? '0 1px 2px rgba(0,0,0,.08)' : 'none' });
+  const tiles = [
+    ['chores', '🧹', 'Chores', `${data.chores.filter(c => c.state === 'open').length} open`],
+    ['shop', '🛒', 'Shopping', `${itemsLeft} Items`],
+    ['notes', '📌', 'Notes', `${data.notes.length} pinned`],
+  ];
+
+  return (
+    <div style={{ width: 1920, height: 1080, background: C.bg, color: C.ink, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {/* top bar */}
+      <div style={{ height: 96, display: 'flex', alignItems: 'center', padding: '0 32px', gap: 28, borderBottom: `1px solid ${C.line}`, background: C.panel }}>
+        <div style={{ fontSize: 52, fontWeight: 700, letterSpacing: -1 }}>{clockStr(now)}</div>
+        <div style={{ fontSize: 22, color: C.mute }}>Friday, 2 October</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22 }}>
+          <span style={{ fontSize: 36 }}>{WEATHER.icon}</span><b>{WEATHER.now}°</b>
+          <span style={{ color: C.mute }}>{WEATHER.hi}° / {WEATHER.lo}°</span>
+          <span style={{ fontSize: 11, color: C.mute, alignSelf: 'flex-end', marginBottom: 6 }}>Open-Meteo.com (CC BY 4.0)</span>
+        </div>
+        <div style={{ display: 'flex', background: C.line, borderRadius: 10, padding: 3, marginLeft: 12 }}>
+          <button onClick={() => setView('week')} style={seg(view === 'week')}>📅 Calendar</button>
+          <button onClick={() => setView('members')} style={seg(view === 'members')}>👥 By Member</button>
+        </div>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 18, color: acting ? M[acting].color : C.mute, fontWeight: 600, textAlign: 'right' }}>
+          {acting ? `Hi ${M[acting].name} · ${remaining}s` : 'Who’s here?'}
+        </span>
+        {MEMBERS.map(m => <Avatar key={m.id} id={m.id} size={60} ring={acting === m.id} dim={acting && acting !== m.id}
+          onClick={() => setActing(acting === m.id ? null : m.id)} />)}
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* main area */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 20, minWidth: 0 }}>
+          {view === 'week' && <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <button onClick={() => setPage(p => p - 1)} style={btnA}>‹</button>
+              <button onClick={() => setPage(0)} style={{ ...btnA, width: 'auto', padding: '0 16px', fontSize: 17 }}>Today</button>
+              <button onClick={() => setPage(p => p + 1)} style={btnA}>›</button>
+              <div style={{ fontSize: 22, fontWeight: 600, marginLeft: 8 }}>
+                {month ? 'October 2026' : `${days[0].getDate()} ${MON[days[0].getMonth()]} – ${days[6].getDate()} ${MON[days[6].getMonth()]}`}
+              </div>
+              <div style={{ flex: 1 }} />
+              <div style={{ display: 'flex', background: C.line, borderRadius: 10, padding: 3 }}>
+                <button onClick={() => setMonth(false)} style={seg(!month)}>Week</button>
+                <button onClick={() => setMonth(true)} style={seg(month)}>Month</button>
+              </div>
+            </div>
+            {month ? <MonthGrid C={C} /> : (
+              <div style={{ flex: 1, background: C.panel, borderRadius: 16, border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: `56px repeat(7, 1fr)`, borderBottom: `1px solid ${C.line}` }}>
+                  <div />
+                  {days.map(d => (
+                    <div key={d} style={{ padding: '10px 8px', borderLeft: `1px solid ${C.line}`, background: sameDay(d, TODAY) ? '#eff6ff' : undefined }}>
+                      <div style={{ fontSize: 15, color: C.mute }}>{DOW[d.getDay()]}</div>
+                      <div style={{ fontSize: 26, fontWeight: 700, color: sameDay(d, TODAY) ? '#2563eb' : C.ink }}>{d.getDate()}</div>
+                      <div style={{ minHeight: 30, display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
+                        {EVENTS.filter(e => e.s === null && sameDay(e.date, d)).map(e => (
+                          <div key={e.id} style={{ fontSize: 13, padding: '3px 6px', borderRadius: 6, background: evBg(e), color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.t}</div>))}
+                      </div>
+                    </div>))}
+                </div>
+                <div style={{ flex: 1, position: 'relative', display: 'grid', gridTemplateColumns: `56px repeat(7, 1fr)`, overflow: 'hidden' }}>
+                  <div>{[...Array(H1 - H0)].map((_, i) => <div key={i} style={{ height: PX, fontSize: 12, color: C.mute, textAlign: 'right', paddingRight: 6 }}>{fmtH(H0 + i)}</div>)}</div>
+                  {days.map(d => (
+                    <div key={d} style={{ position: 'relative', borderLeft: `1px solid ${C.line}`, backgroundImage: `repeating-linear-gradient(${C.line} 0 1px, transparent 1px ${PX}px)` }}>
+                      {EVENTS.filter(e => e.s !== null && sameDay(e.date, d)).map(e => (
+                        <div key={e.id} style={{ position: 'absolute', left: 4, right: 4, top: (e.s - H0) * PX + 1, height: (e.e - e.s) * PX - 3,
+                          background: evColor(e) + '22', borderLeft: `5px solid ${evColor(e)}`, borderRadius: 6, padding: '4px 8px', overflow: 'hidden' }}>
+                          <div style={{ fontSize: 15, fontWeight: 600 }}>{e.t}</div>
+                          <div style={{ fontSize: 12, color: C.mute, display: 'flex', gap: 6, alignItems: 'center' }}>{fmtH(e.s)}<WhoDots who={e.who} size={14} /></div>
+                        </div>))}
+                      {sameDay(d, TODAY) && nowH > H0 && nowH < H1 &&
+                        <div style={{ position: 'absolute', left: 0, right: 0, top: (nowH - H0) * PX, height: 2, background: '#ef4444' }} />}
+                    </div>))}
+                </div>
+              </div>)}
+          </>}
+
+          {view === 'members' && (
+            <div className="pop" style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, minHeight: 0 }}>
+              {[...MEMBERS.map(m => m.id), EVERYONE].map(id => {
+                const m = M[id]; const me = acting === id;
+                const evs = todays.filter(e => id === EVERYONE ? (e.who.includes(EVERYONE) || e.who.length === 0) : e.who.includes(id));
+                const chores = todayChores.filter(c => id === EVERYONE ? !c.who : c.who === id);
+                const tomorrow = EVENTS.filter(e => e.d === 1 && (id === EVERYONE ? (e.who.includes(EVERYONE) || !e.who.length) : e.who.includes(id)));
+                return (
+                  <div key={id} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                    outline: me ? `4px solid ${m.color}` : 'none' }}>
+                    <button onClick={() => m && setActing(me ? null : id)} disabled={!m}
+                      style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: m ? m.color + (me ? '' : '22') : '#f1f5f9', color: me ? '#fff' : C.ink, textAlign: 'left', cursor: m ? 'pointer' : 'default' }}>
+                      <Avatar id={m ? id : null} size={50} />
+                      <div><div style={{ fontSize: 24, fontWeight: 700 }}>{m ? m.name : 'Household'}</div>
+                        <div style={{ fontSize: 14, opacity: .8 }}>{m ? (me ? `Acting · ${remaining}s` : 'Tap to act as ' + m.name) : 'Everyone & anyone'}</div></div>
+                    </button>
+                    <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'hidden' }}>
+                      <LblD>Today</LblD>
+                      {evs.length === 0 && <div style={{ color: C.mute, fontSize: 16 }}>Nothing on</div>}
+                      {evs.map(e => (
+                        <div key={e.id} style={{ display: 'flex', gap: 10, fontSize: 18 }}>
+                          <span style={{ width: 70, color: C.mute, flex: 'none' }}>{e.s === null ? 'all day' : fmtH(e.s)}</span>
+                          <span style={{ fontWeight: 600 }}>{e.t}</span>
+                        </div>))}
+                      <LblD>Chores</LblD>
+                      {chores.length === 0 && <div style={{ color: C.mute, fontSize: 16 }}>All clear ✨</div>}
+                      {chores.map(c => <ChoreRowD key={c.id} c={c} onTick={act('toggleChore', c.id)} C={C} />)}
+                      <LblD>Tomorrow</LblD>
+                      {tomorrow.length === 0 && <div style={{ color: C.mute, fontSize: 16 }}>—</div>}
+                      {tomorrow.map(e => <div key={e.id} style={{ fontSize: 16, color: C.mute }}>{e.s === null ? 'All day' : fmtH(e.s)} · {e.t}</div>)}
+                    </div>
+                  </div>);
+              })}
+            </div>)}
+        </div>
+
+        {/* side rail: Messages + Chores, then drill-downs */}
+        <div style={{ width: 520, padding: '20px 24px 20px 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <PanelA title={`Messages · ${data.messages.length}`} C={C}>
+            {data.messages.length === 0 && <div style={{ color: C.mute }}>No Messages</div>}
+            {data.messages.map(m => (
+              <div key={m.id} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${C.line}` }}>
+                <Avatar id={m.from} size={40} />
+                <div style={{ flex: 1, fontSize: 17 }}>
+                  <div style={{ fontSize: 14, color: C.mute }}>{M[m.from].name} → {m.to.map(t => M[t].name).join(', ')} · {m.at}</div>{m.t}</div>
+                <button onClick={act('dismissMessage', m.id)} style={{ fontSize: 15, color: C.mute, padding: '8px 10px', background: '#f1f5f9', borderRadius: 8 }}>Seen</button>
+              </div>))}
+          </PanelA>
+          <PanelA title={`Chores · today · ${todayChores.filter(c => c.state === 'open').length} left`} C={C} flex>
+            {todayChores.map(c => <ChoreRowD key={c.id} c={c} onTick={act('toggleChore', c.id)} C={C} withWho />)}
+          </PanelA>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            {tiles.map(([k, ic, l, sub]) => (
+              <button key={k} onClick={() => setPanel(k)} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, padding: '16px 10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 40 }}>{ic}</span>
+                <span style={{ fontSize: 20, fontWeight: 600 }}>{l}</span>
+                <span style={{ fontSize: 14, color: C.mute }}>{sub}</span>
+              </button>))}
+          </div>
+        </div>
+      </div>
+
+      {/* drill-down panels (C-style, full screen) */}
+      {panel && (
+        <div className="pop" style={{ position: 'absolute', inset: 0, background: C.bg, zIndex: 20, padding: '32px 48px', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
+            <button onClick={() => setPanel(null)} style={{ fontSize: 24, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 999, padding: '12px 26px' }}>‹ Back</button>
+            <div style={{ fontSize: 40, fontWeight: 700 }}>{tiles.find(t => t[0] === panel)[2]}</div>
+            <div style={{ flex: 1 }} />
+            {acting ? <button onClick={() => setActing(null)} style={{ display: 'flex', alignItems: 'center', gap: 12, background: C.panel, borderRadius: 999, padding: '6px 18px 6px 6px', fontSize: 18, border: `1px solid ${C.line}` }}>
+              <Avatar id={acting} size={44} /> {M[acting].name} <span style={{ color: C.mute }}>· {remaining}s · I'm done ✕</span></button>
+              : <span style={{ color: C.mute, fontSize: 18 }}>You'll be asked who you are when you change something</span>}
+          </div>
+          {panel === 'chores' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+              {data.chores.map(c => (
+                <div key={c.id} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 22, padding: 22, display: 'flex', flexDirection: 'column', gap: 14, opacity: c.state !== 'open' ? .5 : 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <Avatar id={c.who} size={48} />
+                    <div style={{ flex: 1 }}><div style={{ fontSize: 26, fontWeight: 600 }}>{c.t}</div>
+                      <div style={{ fontSize: 17, color: c.overdue && c.state === 'open' ? '#b91c1c' : C.mute }}>{c.due}{c.by ? ` by ${c.by}` : ''} · {c.who ? M[c.who].name : 'anyone'}</div></div>
+                  </div>
+                  {c.state === 'open' ? (
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <button onClick={act('toggleChore', c.id)} style={{ flex: 1, padding: 16, borderRadius: 14, background: C.ink, color: '#fff', fontSize: 20 }}>✓ Done</button>
+                      <button onClick={act('skipChore', c.id)} style={{ padding: 16, borderRadius: 14, background: C.line, fontSize: 20 }}>Skip</button>
+                    </div>
+                  ) : <div style={{ fontSize: 19 }}>{c.state === 'done' ? '✅ Done' : '⏭ Skipped'}{c.doneBy ? ` by ${M[c.doneBy].name}` : ''}</div>}
+                </div>))}
+            </div>)}
+          {panel === 'shop' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 24 }}>
+              {data.lists.map(l => (
+                <div key={l.id} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 22, padding: 22 }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>{l.name}</div>
+                  <QuickAdd placeholder="Add an Item…" onAdd={actVal('addItem', l.id)} chips={l.id === 'l1' ? ['Milk','Bread','Eggs','Apples'] : null} />
+                  {l.items.map(i => (
+                    <button key={i.id} onClick={act('toggleItem', l.id, i.id)} style={{ display: 'flex', gap: 14, width: '100%', textAlign: 'left', padding: '13px 0', fontSize: 22, borderBottom: `1px solid ${C.line}`, opacity: i.got ? .4 : 1, textDecoration: i.got ? 'line-through' : 'none' }}>
+                      {i.got ? '☑' : '☐'} <span style={{ flex: 1 }}>{i.t}{i.q ? ` ×${i.q}` : ''}</span><Avatar id={i.by} size={26} />
+                    </button>))}
+                  {l.items.some(i => i.got) && <button onClick={act('clearGot', l.id)} style={{ marginTop: 10, color: C.mute, fontSize: 16 }}>Clear ticked</button>}
+                </div>))}
+            </div>)}
+          {panel === 'notes' && (
+            <div>
+              <div style={{ maxWidth: 700 }}><QuickAdd placeholder="Pin a Note…" onAdd={actVal('addNote')} /></div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, marginTop: 24 }}>
+                {data.notes.map((n, i) => (
+                  <div key={n.id} style={{ background: '#fde68a', width: 300, minHeight: 180, padding: 20, fontSize: 24, transform: `rotate(${(i % 3 - 1) * 1.5}deg)`, boxShadow: '0 3px 8px rgba(0,0,0,.1)', position: 'relative' }}>
+                    {n.t}
+                    <div style={{ position: 'absolute', bottom: 10, left: 14, right: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <button onClick={act('removeNote', n.id)} style={{ fontSize: 15, color: '#92400e' }}>Unpin</button><Avatar id={n.by} size={28} /></div>
+                  </div>))}
+              </div>
+            </div>)}
+        </div>)}
+
+      {/* Who's this? sheet */}
+      {ask && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,.5)', zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setAsk(null)}>
+          <div className="pop" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 32, padding: '44px 60px', textAlign: 'center' }}>
+            <div style={{ fontSize: 40, fontWeight: 700, marginBottom: 32 }}>Who’s this?</div>
+            <div style={{ display: 'flex', gap: 44 }}>
+              {MEMBERS.map(m => <button key={m.id} onClick={() => choose(m.id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, fontSize: 24 }}>
+                <Avatar id={m.id} size={120} />{m.name}</button>)}
+            </div>
+            <button onClick={() => setAsk(null)} style={{ marginTop: 32, fontSize: 19, color: C.mute }}>Cancel</button>
+          </div>
+        </div>)}
+    </div>
+  );
+}
+const LblD = ({ children }) => <div style={{ fontSize: 13, letterSpacing: 1.5, textTransform: 'uppercase', color: '#64748b', marginTop: 4, fontWeight: 700 }}>{children}</div>;
+function ChoreRowD({ c, onTick, C, withWho }) {
+  const col = c.who ? M[c.who].color : C.mute;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 0', opacity: c.state !== 'open' ? .45 : 1 }}>
+      <button onClick={onTick} style={{ width: 36, height: 36, borderRadius: 9, border: `2px solid ${col}`, background: c.state === 'done' ? col : '#fff', color: '#fff', fontSize: 20, flex: 'none' }}>{c.state === 'done' ? '✓' : ''}</button>
+      <div style={{ flex: 1, fontSize: 18, textDecoration: c.state !== 'open' ? 'line-through' : 'none' }}>
+        {c.t}{c.by && <span style={{ color: C.mute, fontSize: 14 }}> · by {c.by}</span>}
+        {c.overdue && c.state === 'open' && <span style={{ color: '#dc2626', fontSize: 14 }}> · missed yesterday</span>}
+      </div>
+      {withWho && (c.who ? <Avatar id={c.who} size={30} /> : <span style={{ fontSize: 13, color: C.mute }}>anyone</span>)}
+    </div>
+  );
+}
+
 // ── switcher + stage ────────────────────────────────────────────────────────
 const VARIANTS = [
   ['A', 'Calendar wall', VariantA],
   ['B', 'Member columns', VariantB],
   ['C', 'Glance home + drill-in', VariantC],
+  ['D', 'Mix: A + B view + C drill-downs', VariantD],
 ];
 function App() {
   const hub = useHub();
