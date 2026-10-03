@@ -25,12 +25,16 @@ A short, single-use code an Adult issues so a Member can sign in on a new phone;
 _Avoid_: Invite, OTP, password
 
 **Wall Display**:
-The shared, always-on screen in a central spot in the house, which shows the dashboard and accepts touch input.
+The shared, always-on screen in a central spot in the house, which shows the dashboard, accepts touch input, and can do everything the hub offers, so a Member never needs a phone.
 _Avoid_: Kiosk, tablet, hub screen
 
 **Acting Member**:
 The Member who tapped their avatar on the Wall Display, and so is credited with what is done there until another avatar is tapped or the Wall Display sits idle for about a minute, after which there is no Acting Member. Anyone can view the Wall Display, but making a change needs an Acting Member.
 _Avoid_: Current user, session, logged-in user
+
+**Adult PIN**:
+A short secret number each Adult sets, which the Wall Display asks for before any Household-management change made there.
+_Avoid_: Password, passcode, admin PIN
 
 **Family Calendar**:
 The Household's shared iCloud calendar, which Members can create and edit events on through the hub.
