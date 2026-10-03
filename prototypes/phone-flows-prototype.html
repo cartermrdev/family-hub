@@ -1,0 +1,821 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Answers ticket "Prototype the phone flows".
+  Three structurally different phone (PWA) layouts for the four core flows —
+  add an Item, complete a Chore, send a Message, create a Family Calendar event —
+  switchable via ?variant=A|B|C and the floating pink bar (or ← →).
+    A  Tabs      — classic iOS tab bar, one tab per area, + in the nav bar
+    B  Home + ＋ — one scrolling "your day" home, a big ＋ opens quick-add sheets
+    C  Composer  — today as a timeline, an always-there composer bar with modes
+  The right-hand panel (desktop only) swaps the signed-in Member, fakes push
+  notifications, and shows the state log. All data is fake and in memory;
+  reload resets it. "Now" is fixed at Fri 2 Oct 2026, 3:00pm.
+  Open by double-clicking (needs internet for React from cdnjs).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phone Flows Prototype</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.development.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.development.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #1f2430; color: #111;
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; padding: 0; }
+  input, textarea, select { font: inherit; }
+  .desk { display: flex; gap: 28px; align-items: center; justify-content: center; height: 100%; padding: 20px; }
+  .phone { position: relative; width: 390px; height: 844px; border-radius: 54px; background: #f2f2f7;
+    border: 12px solid #000; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.5); flex: none;
+    display: flex; flex-direction: column; }
+  .statusbar { height: 50px; flex: none; display: flex; justify-content: space-between; align-items: flex-end;
+    padding: 0 30px 6px; font-weight: 600; font-size: 15px; }
+  .screen { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+  .homebar { position: absolute; bottom: 7px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px;
+    border-radius: 3px; background: #000; z-index: 60; pointer-events: none; }
+  .panel { width: 340px; height: 844px; background: #11151d; color: #cbd5e1; border-radius: 16px; padding: 16px;
+    font-size: 13px; overflow: auto; flex: none; }
+  .panel h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+  .panel button.pbtn { background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 6px 10px; margin: 0 6px 6px 0; }
+  .panel button.pbtn.on { background: #3b82f6; }
+  .log div { padding: 3px 0; border-bottom: 1px solid #1e293b; }
+  .log span { color: #64748b; margin-right: 6px; }
+  pre.dump { white-space: pre-wrap; font-size: 11px; color: #94a3b8; background: #0b0e14; padding: 8px; border-radius: 8px; }
+  @media (max-width: 760px) {
+    .desk { padding: 0; display: block; }
+    .phone { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+    .panel { display: none; }
+    .switcher { bottom: auto !important; top: 8px; }
+  }
+  .switcher { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 9999; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+    background: #ff3d7f; color: #fff; border-radius: 999px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    font: 600 14px/1 system-ui, sans-serif; white-space: nowrap; }
+  .switcher button { width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.2); }
+
+  /* iOS-ish primitives */
+  .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+  .group { background: #fff; border-radius: 12px; margin: 0 16px 18px; overflow: hidden; }
+  .grouphead { margin: 0 32px 6px; font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: .02em; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; min-height: 48px; border-bottom: .5px solid #e5e7eb; }
+  .row:last-child { border-bottom: 0; }
+  .muted { color: #8e8e93; font-size: 13px; }
+  .blue { color: #007aff; }
+  .input { width: 100%; border: 0; background: #fff; padding: 12px 14px; border-radius: 10px; font-size: 17px; outline: none; }
+  .chip { padding: 7px 12px; border-radius: 999px; background: #e5e7eb; font-size: 14px; white-space: nowrap; }
+  .chip.on { background: #007aff; color: #fff; }
+  .primary { background: #007aff; color: #fff; border-radius: 12px; padding: 14px; font-weight: 600; font-size: 17px; width: 100%; }
+  .primary:disabled { opacity: .4; }
+  .check { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #c7c7cc; flex: none; display: inline-flex;
+    align-items: center; justify-content: center; color: #fff; font-size: 15px; }
+  .check.on { background: #34c759; border-color: #34c759; }
+  .sheetwrap { position: absolute; inset: 0; z-index: 40; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; }
+  .sheet { width: 100%; background: #f2f2f7; border-radius: 14px 14px 0 0; max-height: 92%; display: flex; flex-direction: column;
+    animation: up .22s ease-out; padding-bottom: 24px; }
+  .sheet.full { height: 94%; }
+  @keyframes up { from { transform: translateY(40%); opacity: .3 } to { transform: none; opacity: 1 } }
+  .grabber { width: 36px; height: 5px; background: #c7c7cc; border-radius: 3px; margin: 7px auto 0; }
+  .navbar { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; font-size: 17px; }
+  .navbar b { font-weight: 600; }
+  .toast { position: absolute; left: 16px; right: 16px; top: 4px; z-index: 50; background: rgba(30,30,30,.94); color: #fff;
+    border-radius: 14px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; font-size: 15px;
+    animation: up .2s ease-out; }
+  .banner { position: absolute; top: 6px; left: 8px; right: 8px; z-index: 70; background: rgba(245,245,245,.97);
+    border-radius: 20px; padding: 12px 14px; box-shadow: 0 8px 30px rgba(0,0,0,.25); display: flex; gap: 10px;
+    animation: drop .3s ease-out; text-align: left; }
+  @keyframes drop { from { transform: translateY(-120%) } to { transform: none } }
+  .flash { animation: flash 1.4s ease-out; }
+  @keyframes flash { 0%,40% { background: #fff3c4 } 100% { background: inherit } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useReducer } = React;
+
+// ── fake Household (same as the Wall Display prototype) ─────────────────────
+const MEMBERS = [
+  { id: 'alex',   name: 'Alex',   role: 'Adult', color: '#3b82f6' },
+  { id: 'jordan', name: 'Jordan', role: 'Adult', color: '#10b981' },
+  { id: 'sam',    name: 'Sam',    role: 'Teen',  color: '#f59e0b' },
+  { id: 'riley',  name: 'Riley',  role: 'Teen',  color: '#a855f7' },
+];
+const M = Object.fromEntries(MEMBERS.map(m => [m.id, m]));
+const EVERYONE = 'everyone';
+const NOW_H = 15; // 3:00pm
+
+const TODAY = new Date(2026, 9, 2); // Fri 2 Oct 2026
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+const dayDiff = d => Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - TODAY) / 864e5);
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtH = h => { const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  return `${((hh + 11) % 12) + 1}${mm ? ':' + String(mm).padStart(2,'0') : ''}${hh < 12 ? 'am' : 'pm'}`; };
+const dayLabel = d => { const n = dayDiff(d);
+  return n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n === -1 ? 'Yesterday'
+    : n > 1 && n < 7 ? DOW[d.getDay()] : `${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}`; };
+const dayLong = d => `${dayLabel(d)}${Math.abs(dayDiff(d)) < 7 ? ` · ${DOW[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}` : ''}`;
+const evTime = e => e.s == null ? 'All day' : `${fmtH(e.s)}–${fmtH(e.e)}`;
+const toHHMM = h => `${String(Math.floor(h)).padStart(2,'0')}:${String(Math.round((h % 1) * 60)).padStart(2,'0')}`;
+const fromHHMM = s => { const [a, b] = s.split(':').map(Number); return a + b / 60; };
+const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const fromISO = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+let uid = 100; const nid = p => p + (uid++);
+
+const INITIAL = {
+  me: 'sam',
+  events: [
+    { d: 0, s: 7.5,  e: 8.25, t: 'School drop-off',      who: ['jordan','riley'] },
+    { d: 0, s: 16,   e: 17.5, t: 'Soccer practice',      who: ['sam'], loc: 'Field 3' },
+    { d: 0, s: 18.5, e: 20,   t: 'Pizza night',          who: [EVERYONE] },
+    { d: 0, s: null, t: 'Riley — field trip form due',   who: ['riley'] },
+    { d: 1, s: 9,    e: 10,   t: 'Swim lesson',          who: ['riley'] },
+    { d: 1, s: 11,   e: 15,   t: 'Grandma visiting',     who: [EVERYONE] },
+    { d: 1, s: 19,   e: 22,   t: 'Dinner with the Parks', who: ['alex','jordan'] },
+    { d: 2, s: null, t: 'Farmers market',                who: [] },
+    { d: 2, s: 14,   e: 16,   t: "Sam's game",           who: ['sam','alex'] },
+    { d: 3, s: 8,    e: 9,    t: 'Dentist',              who: ['riley','jordan'] },
+    { d: 4, s: 18,   e: 19.5, t: 'Parent-teacher night', who: ['alex','jordan'] },
+    { d: 5, s: null, t: 'Bin day',                       who: [EVERYONE], repeat: 'Weekly' },
+    { d: 6, s: 15.5, e: 17,   t: 'Orthodontist',         who: ['sam'] },
+    { d: 9, s: 10,   e: 12,   t: 'Car service',          who: ['alex'] },
+    { d: 15, s: 18,  e: 21,   t: "Sam's birthday party", who: [EVERYONE] },
+  ].map((e, i) => ({ ...e, id: 'ev' + i, date: addDays(TODAY, e.d) })),
+  // due = day offset; repeat = label; next = day offset of the next Occurrence once this one ends
+  chores: [
+    { id: 'c1', t: 'Take out recycling', who: 'sam',    due: 0,  by: 19,   repeat: 'Every Fri', next: 7, state: 'open' },
+    { id: 'c2', t: 'Feed the cat',       who: 'riley',  due: 0,  by: null, repeat: 'Daily', next: 1, state: 'open' },
+    { id: 'c3', t: 'Empty dishwasher',   who: null,     due: 0,  by: null, repeat: '2 days after done', next: 2, state: 'open' },
+    { id: 'c4', t: 'Water plants',       who: 'jordan', due: 0,  by: null, repeat: 'Every Mon & Fri', next: 3, state: 'done', doneBy: 'jordan' },
+    { id: 'c5', t: 'Vacuum your room',   who: 'sam',    due: -1, by: null, repeat: '1 week after done', next: 7, state: 'open' },
+    { id: 'c6', t: 'Mow the lawn',       who: 'alex',   due: 1,  by: null, repeat: 'Every 2 weeks', next: 15, state: 'open' },
+    { id: 'c7', t: 'Change bed sheets',  who: null,     due: 2,  by: null, repeat: 'Every Sun', next: 9, state: 'open' },
+    { id: 'c8', t: 'Return library books', who: 'sam',  due: 3,  by: 17,   repeat: null, state: 'open' },
+  ],
+  lists: [
+    { id: 'l1', name: 'Groceries', items: [
+      { id: 'i1', t: 'Milk', q: '2', by: 'jordan', got: false },
+      { id: 'i2', t: 'Bananas', by: 'riley', got: false },
+      { id: 'i3', t: 'Pasta sauce', by: 'alex', got: false },
+      { id: 'i4', t: 'Cereal', by: 'sam', got: true },
+      { id: 'i5', t: 'Eggs', q: '12', by: 'jordan', got: false },
+    ]},
+    { id: 'l2', name: 'Costco', items: [
+      { id: 'i6', t: 'Paper towels', by: 'alex', got: false },
+      { id: 'i7', t: 'Coffee beans', by: 'jordan', got: false },
+    ]},
+    { id: 'l3', name: 'Hardware', items: [ { id: 'i8', t: 'AA batteries', q: '8', by: 'sam', got: false } ]},
+  ],
+  // recent Items people have added before, for quick re-add
+  usual: ['Milk', 'Bread', 'Eggs', 'Bananas', 'Yogurt', 'Apples', 'Coffee beans', 'Toilet paper'],
+  messages: [
+    { id: 'm1', from: 'jordan', to: ['sam'], t: "Don't forget your cleats 👟", h: 7.7, seen: ['sam'] },
+    { id: 'm2', from: 'alex', to: ['riley','sam'], t: 'Home late tonight, save me pizza', h: 12.2, seen: ['riley'] },
+    { id: 'm3', from: 'riley', to: ['jordan'], t: "Can I go to Mia's after school?", h: 14.5, seen: [] },
+    { id: 'm4', from: 'jordan', to: [EVERYONE], t: 'Pizza night is at 6:30 — be home!', h: 14.8, seen: ['alex'] },
+  ],
+  log: [],
+  toast: null,
+  prev: null,
+};
+
+const forMe = (m, me) => m.from !== me && (m.to.includes(me) || m.to.includes(EVERYONE));
+const listName = (s, id) => s.lists.find(l => l.id === id).name;
+
+function reducer(s, a) {
+  const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const me = M[s.me].name;
+  const commit = (next, text, undo = true) => ({ ...next, prev: undo ? { ...s, prev: null, toast: null } : null,
+    toast: { text, undo, n: Date.now() }, log: [{ at: stamp, text: `${me}: ${text}` }, ...s.log].slice(0, 40) });
+  switch (a.type) {
+    case 'me': return { ...s, me: a.id, prev: null, toast: null, log: [{ at: stamp, text: `— signed in as ${M[a.id].name}` }, ...s.log] };
+    case 'undo': return s.prev ? { ...s.prev, log: [{ at: stamp, text: `${me}: undo` }, ...s.log] } : s;
+    case 'clearToast': return { ...s, toast: null };
+    case 'addItem': {
+      const item = { id: nid('i'), t: a.t, q: a.q || undefined, by: s.me, got: false, fresh: true };
+      return commit({ ...s, lists: s.lists.map(l => l.id === a.list ? { ...l, items: [item, ...l.items] } : l) },
+        `added ${a.q ? a.q + ' × ' : ''}${a.t} to ${listName(s, a.list)}`);
+    }
+    case 'tickItem':
+      return { ...s, lists: s.lists.map(l => l.id === a.list
+        ? { ...l, items: l.items.map(i => i.id === a.id ? { ...i, got: !i.got } : i) } : l) };
+    case 'chore': {
+      const c = s.chores.find(c => c.id === a.id);
+      const nextTxt = c.repeat ? ` · next ${dayLabel(addDays(TODAY, c.next))}` : '';
+      return commit({ ...s, chores: s.chores.map(x => x.id === a.id ? { ...x, state: a.state, doneBy: s.me } : x) },
+        `${a.state === 'done' ? 'did' : 'skipped'} “${c.t}”${nextTxt}`);
+    }
+    case 'send': {
+      const msg = { id: nid('m'), from: s.me, to: a.to, t: a.t, h: NOW_H, seen: [], fresh: true };
+      const names = a.to.includes(EVERYONE) ? 'Everyone' : a.to.map(w => M[w].name).join(', ');
+      return commit({ ...s, messages: [...s.messages, msg] }, `sent a Message to ${names}`);
+    }
+    case 'seen':
+      return { ...s, messages: s.messages.map(m => m.id === a.id && !m.seen.includes(s.me) ? { ...m, seen: [...m.seen, s.me] } : m) };
+    case 'addEvent': {
+      const ev = { ...a.ev, id: nid('ev'), fresh: true };
+      return commit({ ...s, events: [...s.events, ev] }, `added “${ev.t}” to the Family Calendar · ${dayLabel(ev.date)} ${evTime(ev)}`);
+    }
+    default: return s;
+  }
+}
+
+// ── tiny shared primitives (layouts are deliberately NOT shared) ────────────
+function Avatar({ id, size = 32, dim, ring }) {
+  const m = M[id];
+  return (
+    <span style={{ width: size, height: size, borderRadius: '50%', display: 'inline-flex', alignItems: 'center',
+      justifyContent: 'center', flex: 'none', background: m ? m.color : '#64748b', opacity: dim ? .3 : 1,
+      color: '#fff', fontWeight: 700, fontSize: size * .42, transition: 'all .15s',
+      boxShadow: ring ? `0 0 0 2px #f2f2f7, 0 0 0 4px ${m ? m.color : '#64748b'}` : 'none' }}>
+      {m ? m.name[0] : '👪'}
+    </span>
+  );
+}
+const Who = ({ who, size = 18 }) => who.length
+  ? <span style={{ display: 'inline-flex', gap: 2 }}>{who.map(w => <Avatar key={w} id={w === EVERYONE ? null : w} size={size} />)}</span>
+  : null;
+
+// pick Members; Everyone is exclusive
+function MemberPicker({ value, onChange, me, exclude, size = 40 }) {
+  const toggle = id => {
+    if (id === EVERYONE) return onChange(value.includes(EVERYONE) ? [] : [EVERYONE]);
+    const v = value.filter(x => x !== EVERYONE);
+    onChange(v.includes(id) ? v.filter(x => x !== id) : [...v, id]);
+  };
+  return (
+    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+      {[...MEMBERS.map(m => m.id).filter(id => id !== exclude), EVERYONE].map(id => {
+        const on = value.includes(id);
+        return (
+          <button key={id} onClick={() => toggle(id)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, fontSize: 12 }}>
+            <Avatar id={id === EVERYONE ? null : id} size={size} dim={!on} ring={on} />
+            <span style={{ color: on ? '#111' : '#8e8e93' }}>{id === EVERYONE ? 'Everyone' : M[id].name + (id === me ? ' (me)' : '')}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Sheet({ onClose, children, full }) {
+  return (
+    <div className="sheetwrap" onClick={onClose}>
+      <div className={'sheet' + (full ? ' full' : '')} onClick={e => e.stopPropagation()}>
+        <div className="grabber" />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const Field = ({ label, children }) => <div className="row"><span style={{ flex: 1 }}>{label}</span>{children}</div>;
+// The full event form — what any variant falls back to for "all the details".
+function EventForm({ initial, me, onSave, onCancel }) {
+  const [ev, setEv] = useState(() => ({ t: '', date: TODAY, s: 17, e: 18, who: [me], loc: '', notes: '', repeat: '', ...initial }));
+  const allDay = ev.s == null;
+  const set = p => setEv(x => ({ ...x, ...p }));
+  const plain = { border: 0, background: '#eef0f3', borderRadius: 8, padding: '6px 8px', fontSize: 16 };
+  return (
+    <>
+      <div className="navbar">
+        <button className="blue" onClick={onCancel}>Cancel</button>
+        <b>New Event</b>
+        <button className="blue" style={{ fontWeight: 600, opacity: ev.t.trim() ? 1 : .4 }} disabled={!ev.t.trim()}
+          onClick={() => onSave({ ...ev, t: ev.t.trim() })}>Add</button>
+      </div>
+      <div className="scroll">
+        <div className="group">
+          <input className="input" autoFocus placeholder="Title" value={ev.t} onChange={e => set({ t: e.target.value })} />
+          <input className="input" style={{ borderTop: '.5px solid #e5e7eb', borderRadius: 0 }} placeholder="Location"
+            value={ev.loc} onChange={e => set({ loc: e.target.value })} />
+        </div>
+        <div className="group">
+          <Field label="All-day"><input type="checkbox" checked={allDay}
+            onChange={e => set(e.target.checked ? { s: null, e: null } : { s: 17, e: 18 })} style={{ width: 22, height: 22 }} /></Field>
+          <Field label="Date"><input type="date" style={plain} value={toISO(ev.date)} onChange={e => e.target.value && set({ date: fromISO(e.target.value) })} /></Field>
+          {!allDay && <Field label="Starts"><input type="time" style={plain} value={toHHMM(ev.s)}
+            onChange={e => { const s = fromHHMM(e.target.value); set({ s, e: Math.max(ev.e, s + 1) }); }} /></Field>}
+          {!allDay && <Field label="Ends"><input type="time" style={plain} value={toHHMM(ev.e)} onChange={e => set({ e: fromHHMM(e.target.value) })} /></Field>}
+          <Field label="Repeat">
+            <select style={plain} value={ev.repeat} onChange={e => set({ repeat: e.target.value })}>
+              <option value="">Never</option><option>Daily</option><option>Weekly</option><option>Monthly</option><option>Yearly</option>
+            </select>
+          </Field>
+        </div>
+        <div className="grouphead">Who's it for?</div>
+        <div className="group" style={{ padding: 14 }}><MemberPicker value={ev.who} onChange={who => set({ who })} me={me} /></div>
+        <div className="group">
+          <textarea className="input" rows={3} placeholder="Notes" value={ev.notes} onChange={e => set({ notes: e.target.value })} style={{ resize: 'none' }} />
+        </div>
+        <div className="muted" style={{ margin: '0 32px 24px' }}>Saved to the iCloud Family Calendar — shows on everyone's iPhone within about a minute.</div>
+      </div>
+    </>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A — Tabs: Today · Calendar · Chores · Shopping · Messages
+// ═════════════════════════════════════════════════════════════════════════════
+function VariantA({ s, d, link }) {
+  const [tab, setTab] = useState('today');
+  const [modal, setModal] = useState(null);
+  const [listId, setListId] = useState(null);
+  const [mine, setMine] = useState(true);
+  useEffect(() => { if (link) setTab(link.kind === 'chore' ? 'chores' : 'messages'); }, [link]);
+  const unseen = s.messages.filter(m => forMe(m, s.me) && !m.seen.includes(s.me)).length;
+  const myDue = s.chores.filter(c => c.state === 'open' && c.who === s.me && c.due <= 0).length;
+  const TABS = [['today','☀️','Today'],['cal','📅','Calendar'],['chores','✅','Chores', myDue],['shop','🛒','Shopping'],['messages','💬','Messages', unseen]];
+  const titles = { today: 'Today', cal: 'Calendar', chores: 'Chores', shop: 'Shopping', messages: 'Messages' };
+  const plus = { cal: () => setModal('event'), messages: () => setModal('message') };
+
+  const ChoreRow = ({ c }) => (
+    <div className={'row' + (link && link.id === c.id ? ' flash' : '')} key={c.id}>
+      <button className={'check' + (c.state === 'done' ? ' on' : '')} disabled={c.state !== 'open'}
+        onClick={() => d({ type: 'chore', id: c.id, state: 'done' })}>{c.state === 'done' ? '✓' : ''}</button>
+      <div style={{ flex: 1, opacity: c.state === 'open' ? 1 : .45 }}>
+        <div style={{ textDecoration: c.state === 'open' ? 'none' : 'line-through' }}>{c.t}</div>
+        <div className="muted" style={{ color: c.due < 0 && c.state === 'open' ? '#ff3b30' : undefined }}>
+          {c.state === 'skipped' ? 'Skipped' : dayLabel(addDays(TODAY, c.due))}{c.by ? ` by ${fmtH(c.by)}` : ''}{c.repeat ? ` · ↻ ${c.repeat}` : ''}
+        </div>
+      </div>
+      {c.who ? <Avatar id={c.who} size={24} /> : <span className="muted">Anyone</span>}
+      {c.state === 'open' && <button className="muted" style={{ padding: 6 }} onClick={() => d({ type: 'chore', id: c.id, state: 'skipped' })}>Skip</button>}
+    </div>
+  );
+
+  let body;
+  if (tab === 'today') {
+    const evs = s.events.filter(e => sameDay(e.date, TODAY)).sort((a, b) => (a.s ?? -1) - (b.s ?? -1));
+    const ch = s.chores.filter(c => c.due <= 0 && (c.who === s.me || !c.who));
+    const msgs = s.messages.filter(m => forMe(m, s.me) && !m.seen.includes(s.me));
+    body = (<>
+      {msgs.length > 0 && <><div className="grouphead">New Messages</div><div className="group">
+        {msgs.map(m => <button className="row" key={m.id} style={{ width: '100%', textAlign: 'left' }} onClick={() => setTab('messages')}>
+          <Avatar id={m.from} size={28} /><div style={{ flex: 1 }}>{m.t}</div></button>)}</div></>}
+      <div className="grouphead">My Chores</div>
+      <div className="group">{ch.map(c => <ChoreRow key={c.id} c={c} />)}</div>
+      <div className="grouphead">Calendar</div>
+      <div className="group">{evs.map(e => <div className="row" key={e.id}>
+        <div style={{ width: 64 }} className="muted">{e.s == null ? 'all-day' : fmtH(e.s)}</div><div style={{ flex: 1 }}>{e.t}</div><Who who={e.who} /></div>)}</div>
+    </>);
+  } else if (tab === 'cal') {
+    const days = [...Array(21)].map((_, i) => addDays(TODAY, i)).map(day => [day, s.events.filter(e => sameDay(e.date, day)).sort((a, b) => (a.s ?? -1) - (b.s ?? -1))]).filter(([, e]) => e.length);
+    body = days.map(([day, evs]) => (<div key={day}>
+      <div className="grouphead">{dayLong(day)}</div>
+      <div className="group">{evs.map(e => <div className={'row' + (e.fresh ? ' flash' : '')} key={e.id}>
+        <div style={{ width: 4, alignSelf: 'stretch', borderRadius: 2, background: e.who.length === 1 && M[e.who[0]] ? M[e.who[0]].color : '#94a3b8' }} />
+        <div style={{ flex: 1 }}><div>{e.t}</div><div className="muted">{evTime(e)}{e.loc ? ` · ${e.loc}` : ''}{e.repeat ? ` · ↻ ${e.repeat}` : ''}</div></div>
+        <Who who={e.who} /></div>)}</div></div>));
+  } else if (tab === 'chores') {
+    const ch = s.chores.filter(c => mine ? (c.who === s.me || !c.who) : true).sort((a, b) => a.due - b.due);
+    body = (<>
+      <div style={{ display: 'flex', margin: '0 16px 14px', background: '#e3e3e8', borderRadius: 9, padding: 2 }}>
+        {[[true,'Mine + Anyone'],[false,'Everyone']].map(([v, l]) => <button key={l} onClick={() => setMine(v)}
+          style={{ flex: 1, padding: 7, borderRadius: 7, fontSize: 14, fontWeight: 600, background: mine === v ? '#fff' : 'transparent' }}>{l}</button>)}
+      </div>
+      <div className="group">{ch.map(c => <ChoreRow key={c.id} c={c} />)}</div>
+    </>);
+  } else if (tab === 'shop') {
+    const list = s.lists.find(l => l.id === listId);
+    body = list ? <AList s={s} d={d} list={list} /> : (<div className="group">
+      {s.lists.map(l => <button key={l.id} className="row" style={{ width: '100%', textAlign: 'left' }} onClick={() => setListId(l.id)}>
+        <span style={{ fontSize: 22 }}>🛒</span><div style={{ flex: 1 }}>{l.name}</div>
+        <span className="muted">{l.items.filter(i => !i.got).length}</span><span className="muted">›</span></button>)}
+    </div>);
+  } else {
+    const msgs = s.messages.filter(m => forMe(m, s.me) || m.from === s.me).slice().reverse();
+    body = <div className="group">{msgs.map(m => {
+      const fromMe = m.from === s.me;
+      return <button key={m.id} className={'row' + ((link && link.id === m.id) || m.fresh ? ' flash' : '')} style={{ width: '100%', textAlign: 'left', alignItems: 'flex-start' }}
+        onClick={() => d({ type: 'seen', id: m.id })}>
+        <Avatar id={m.from} size={34} />
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <b style={{ fontWeight: forMe(m, s.me) && !m.seen.includes(s.me) ? 700 : 500 }}>{fromMe ? 'You' : M[m.from].name} → {m.to.includes(EVERYONE) ? 'Everyone' : m.to.map(w => w === s.me ? 'you' : M[w].name).join(', ')}</b>
+            <span className="muted">{fmtH(m.h)}</span></div>
+          <div>{m.t}</div>
+          {fromMe && <div className="muted">{m.seen.length ? `Seen by ${m.seen.map(w => M[w].name).join(', ')}` : 'Not seen yet'}</div>}
+        </div>
+        {forMe(m, s.me) && !m.seen.includes(s.me) && <span style={{ width: 10, height: 10, borderRadius: 5, background: '#007aff', marginTop: 6 }} />}
+      </button>; })}</div>;
+  }
+
+  return (<>
+    <div style={{ padding: '4px 20px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {tab === 'shop' && listId
+        ? <button className="blue" style={{ fontSize: 17 }} onClick={() => setListId(null)}>‹ Lists</button>
+        : <h1 style={{ margin: 0, fontSize: 34 }}>{titles[tab]}</h1>}
+      {plus[tab] && <button className="blue" style={{ fontSize: 30, lineHeight: 1 }} onClick={plus[tab]}>＋</button>}
+    </div>
+    {tab === 'shop' && listId && <h1 style={{ margin: '0 20px 10px', fontSize: 34 }}>{s.lists.find(l => l.id === listId).name}</h1>}
+    <div className="scroll" style={{ paddingBottom: 20 }}>{body}</div>
+    <div style={{ display: 'flex', borderTop: '.5px solid #d1d1d6', background: 'rgba(249,249,249,.95)', padding: '6px 0 26px' }}>
+      {TABS.map(([k, ic, l, badge]) => <button key={k} onClick={() => setTab(k)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+        fontSize: 10, color: tab === k ? '#007aff' : '#8e8e93', position: 'relative', filter: tab === k ? 'none' : 'grayscale(1)' }}>
+        <span style={{ fontSize: 22 }}>{ic}</span>{l}
+        {badge > 0 && <span style={{ position: 'absolute', top: -2, left: '55%', background: '#ff3b30', color: '#fff', borderRadius: 9, fontSize: 11, minWidth: 18, padding: '1px 5px' }}>{badge}</span>}
+      </button>)}
+    </div>
+    {modal === 'event' && <Sheet full onClose={() => setModal(null)}>
+      <EventForm me={s.me} onCancel={() => setModal(null)} onSave={ev => { d({ type: 'addEvent', ev }); setModal(null); }} /></Sheet>}
+    {modal === 'message' && <Sheet full onClose={() => setModal(null)}><AMessage s={s} d={d} close={() => setModal(null)} /></Sheet>}
+  </>);
+}
+// Reminders-style list: an always-there "Add Item" row at the top
+function AList({ s, d, list }) {
+  const [t, setT] = useState(''); const [q, setQ] = useState('');
+  const add = () => { if (!t.trim()) return; d({ type: 'addItem', list: list.id, t: t.trim(), q: q.trim() }); setT(''); setQ(''); };
+  const items = [...list.items.filter(i => !i.got), ...list.items.filter(i => i.got)];
+  return (<div className="group">
+    <div className="row">
+      <span className="check" style={{ borderStyle: 'dashed' }}>＋</span>
+      <input placeholder="Add Item" value={t} onChange={e => setT(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()}
+        style={{ flex: 1, border: 0, outline: 'none', fontSize: 17 }} />
+      <input placeholder="Qty" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()}
+        style={{ width: 44, border: 0, outline: 'none', fontSize: 15, textAlign: 'right' }} inputMode="numeric" />
+    </div>
+    {items.map(i => <div key={i.id} className={'row' + (i.fresh ? ' flash' : '')}>
+      <button className={'check' + (i.got ? ' on' : '')} onClick={() => d({ type: 'tickItem', list: list.id, id: i.id })}>{i.got ? '✓' : ''}</button>
+      <div style={{ flex: 1, opacity: i.got ? .4 : 1 }}>{i.t}{i.q && <span className="muted"> × {i.q}</span>}</div>
+      <Avatar id={i.by} size={20} /></div>)}
+  </div>);
+}
+function AMessage({ s, d, close }) {
+  const [to, setTo] = useState([]); const [t, setT] = useState('');
+  const ok = to.length && t.trim();
+  return (<>
+    <div className="navbar"><button className="blue" onClick={close}>Cancel</button><b>New Message</b>
+      <button className="blue" style={{ fontWeight: 600, opacity: ok ? 1 : .4 }} disabled={!ok} onClick={() => { d({ type: 'send', to, t: t.trim() }); close(); }}>Send</button></div>
+    <div className="grouphead">To</div>
+    <div className="group" style={{ padding: 14 }}><MemberPicker value={to} onChange={setTo} exclude={s.me} /></div>
+    <div className="group"><textarea className="input" rows={5} autoFocus placeholder="Message" value={t} onChange={e => setT(e.target.value)} style={{ resize: 'none' }} /></div>
+    <div className="muted" style={{ margin: '0 32px' }}>Shows on the Wall Display and pushes to each recipient's phone. No replies.</div>
+  </>);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// B — Home + ＋: one "your day" page; a big ＋ opens compact quick-add sheets
+// ═════════════════════════════════════════════════════════════════════════════
+function VariantB({ s, d, link }) {
+  const [sheet, setSheet] = useState(null); // 'menu'|'item'|'message'|'event'|'eventFull'|{list}
+  const [draft, setDraft] = useState(null);
+  const me = M[s.me];
+  const msgs = s.messages.filter(m => forMe(m, s.me)).slice().reverse().slice(0, 3);
+  const chores = s.chores.filter(c => (c.who === s.me || !c.who) && c.due <= 1).sort((a, b) => a.due - b.due);
+  const up = s.events.filter(e => dayDiff(e.date) >= 0 && dayDiff(e.date) <= 2 && (e.s == null || dayDiff(e.date) > 0 || e.e > NOW_H))
+    .sort((a, b) => a.date - b.date || (a.s ?? -1) - (b.s ?? -1));
+
+  return (<>
+    <div className="scroll" style={{ paddingBottom: 120 }}>
+      <div style={{ padding: '6px 20px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <Avatar id={s.me} size={44} />
+        <div><div className="muted">Fri 2 Oct · ⛅ 64°</div><div style={{ fontSize: 26, fontWeight: 700 }}>Hi {me.name}</div></div>
+      </div>
+
+      {msgs.length > 0 && <div style={{ display: 'flex', gap: 10, overflowX: 'auto', padding: '0 16px 18px' }}>
+        {msgs.map(m => { const unseen = !m.seen.includes(s.me);
+          return <button key={m.id} onClick={() => d({ type: 'seen', id: m.id })} className={link && link.id === m.id ? 'flash' : ''}
+            style={{ flex: 'none', width: 250, textAlign: 'left', background: unseen ? M[m.from].color : '#fff', color: unseen ? '#fff' : '#111', borderRadius: 16, padding: 14 }}>
+            <div style={{ fontSize: 13, opacity: .85, marginBottom: 4 }}>💬 {M[m.from].name}{m.to.includes(EVERYONE) ? ' → Everyone' : ''} · {fmtH(m.h)}</div>
+            <div style={{ fontSize: 17, fontWeight: 500 }}>{m.t}</div>
+            {unseen && <div style={{ fontSize: 12, marginTop: 6, opacity: .85 }}>Tap to mark seen</div>}
+          </button>; })}
+      </div>}
+
+      <div className="grouphead">Your Chores</div>
+      <div style={{ margin: '0 16px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {chores.map(c => { const open = c.state === 'open';
+          return <div key={c.id} className={link && link.id === c.id ? 'flash' : ''} style={{ background: '#fff', borderRadius: 14, padding: 12, display: 'flex', alignItems: 'center', gap: 10, opacity: open ? 1 : .5 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, textDecoration: open ? 'none' : 'line-through' }}>{c.t}</div>
+              <div className="muted" style={{ color: open && c.due < 0 ? '#ff3b30' : undefined }}>
+                {open ? `${c.due < 0 ? 'Overdue · ' : ''}${dayLabel(addDays(TODAY, c.due))}${c.by ? ` by ${fmtH(c.by)}` : ''}` : c.state === 'done' ? `Done${c.repeat ? ` · next ${dayLabel(addDays(TODAY, c.next))}` : ''}` : 'Skipped'}
+                {c.who ? '' : ' · anyone'}</div>
+            </div>
+            {open && <button onClick={() => d({ type: 'chore', id: c.id, state: 'skipped' })} style={{ padding: '8px 10px', color: '#8e8e93' }}>Skip</button>}
+            {open && <button onClick={() => d({ type: 'chore', id: c.id, state: 'done' })} style={{ padding: '10px 16px', borderRadius: 10, background: '#34c759', color: '#fff', fontWeight: 600 }}>Done</button>}
+          </div>; })}
+      </div>
+
+      <div className="grouphead">Coming up</div>
+      <div className="group">{up.slice(0, 7).map(e => <div key={e.id} className={'row' + (e.fresh ? ' flash' : '')}>
+        <div style={{ width: 74 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{dayLabel(e.date)}</div><div className="muted">{e.s == null ? 'all-day' : fmtH(e.s)}</div></div>
+        <div style={{ flex: 1 }}>{e.t}</div><Who who={e.who} /></div>)}</div>
+
+      <div className="grouphead">Shopping</div>
+      <div style={{ display: 'flex', gap: 10, padding: '0 16px' }}>
+        {s.lists.map(l => <button key={l.id} onClick={() => setSheet({ list: l.id })} style={{ flex: 1, background: '#fff', borderRadius: 14, padding: 12, textAlign: 'left' }}>
+          <div style={{ fontSize: 22 }}>🛒</div><div style={{ fontWeight: 600 }}>{l.name}</div><div className="muted">{l.items.filter(i => !i.got).length} to get</div></button>)}
+      </div>
+    </div>
+
+    <button onClick={() => setSheet('menu')} style={{ position: 'absolute', bottom: 36, left: '50%', transform: 'translateX(-50%)', width: 64, height: 64,
+      borderRadius: 32, background: '#007aff', color: '#fff', fontSize: 34, boxShadow: '0 8px 24px rgba(0,122,255,.45)', zIndex: 20 }}>＋</button>
+
+    {sheet === 'menu' && <Sheet onClose={() => setSheet(null)}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, padding: 20 }}>
+        {[['item','🛒','Shopping Item'],['message','💬','Message'],['event','📅','Event']].map(([k, ic, l]) =>
+          <button key={k} onClick={() => setSheet(k)} style={{ background: '#fff', borderRadius: 16, padding: '18px 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+            <span style={{ fontSize: 34 }}>{ic}</span>{l}</button>)}
+      </div>
+    </Sheet>}
+    {sheet === 'item' && <Sheet onClose={() => setSheet(null)}><BItem s={s} d={d} /></Sheet>}
+    {sheet && sheet.list && <Sheet full onClose={() => setSheet(null)}><BList s={s} d={d} list={s.lists.find(l => l.id === sheet.list)} close={() => setSheet(null)} /></Sheet>}
+    {sheet === 'message' && <Sheet onClose={() => setSheet(null)}><BMessage s={s} d={d} close={() => setSheet(null)} /></Sheet>}
+    {sheet === 'event' && <Sheet onClose={() => setSheet(null)}><BEvent s={s} d={d} close={() => setSheet(null)} more={ev => { setDraft(ev); setSheet('eventFull'); }} /></Sheet>}
+    {sheet === 'eventFull' && <Sheet full onClose={() => setSheet(null)}>
+      <EventForm me={s.me} initial={draft} onCancel={() => setSheet(null)} onSave={ev => { d({ type: 'addEvent', ev }); setSheet(null); }} /></Sheet>}
+  </>);
+}
+function BItem({ s, d }) {
+  const [list, setList] = useState('l1'); const [t, setT] = useState(''); const [q, setQ] = useState(1);
+  const ref = useRef();
+  const add = (name = t) => { if (!name.trim()) return; d({ type: 'addItem', list, t: name.trim(), q: q > 1 ? String(q) : '' }); setT(''); setQ(1); ref.current && ref.current.focus(); };
+  const onList = s.lists.find(l => l.id === list).items.filter(i => !i.got).map(i => i.t.toLowerCase());
+  return (<div style={{ padding: '14px 16px 0' }}>
+    <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      {s.lists.map(l => <button key={l.id} className={'chip' + (list === l.id ? ' on' : '')} onClick={() => setList(l.id)}>{l.name}</button>)}
+    </div>
+    <div style={{ display: 'flex', gap: 8 }}>
+      <input ref={ref} className="input" autoFocus placeholder={`Add to ${listName(s, list)}…`} value={t} onChange={e => setT(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} />
+      <div style={{ display: 'flex', alignItems: 'center', background: '#fff', borderRadius: 10 }}>
+        <button style={{ padding: '0 10px', fontSize: 20 }} onClick={() => setQ(Math.max(1, q - 1))}>−</button>
+        <span style={{ minWidth: 18, textAlign: 'center' }}>{q}</span>
+        <button style={{ padding: '0 10px', fontSize: 20 }} onClick={() => setQ(q + 1)}>+</button>
+      </div>
+    </div>
+    {onList.includes(t.trim().toLowerCase()) && <div className="muted" style={{ color: '#ff9500', marginTop: 6 }}>Already on {listName(s, list)}</div>}
+    <div className="muted" style={{ margin: '14px 0 6px' }}>Usual</div>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+      {s.usual.filter(u => !onList.includes(u.toLowerCase())).map(u => <button key={u} className="chip" style={{ background: '#fff' }} onClick={() => add(u)}>＋ {u}</button>)}
+    </div>
+    <button className="primary" disabled={!t.trim()} onClick={() => add()}>Add — keep adding</button>
+  </div>);
+}
+function BList({ s, d, list, close }) {
+  const items = [...list.items.filter(i => !i.got), ...list.items.filter(i => i.got)];
+  return (<>
+    <div className="navbar"><span /><b>{list.name}</b><button className="blue" onClick={close}>Done</button></div>
+    <div className="scroll"><div className="group">{items.map(i => <div key={i.id} className={'row' + (i.fresh ? ' flash' : '')}>
+      <button className={'check' + (i.got ? ' on' : '')} onClick={() => d({ type: 'tickItem', list: list.id, id: i.id })}>{i.got ? '✓' : ''}</button>
+      <div style={{ flex: 1, opacity: i.got ? .4 : 1 }}>{i.t}{i.q && <span className="muted"> × {i.q}</span>}</div>
+      <span className="muted">{M[i.by].name}</span></div>)}</div></div>
+  </>);
+}
+function BMessage({ s, d, close }) {
+  const [to, setTo] = useState([]); const [t, setT] = useState('');
+  const ok = to.length && t.trim();
+  return (<div style={{ padding: '14px 16px 0' }}>
+    <div className="muted" style={{ marginBottom: 10 }}>Message to…</div>
+    <MemberPicker value={to} onChange={setTo} exclude={s.me} size={48} />
+    <div style={{ display: 'flex', gap: 8, marginTop: 16, alignItems: 'flex-end' }}>
+      <textarea className="input" rows={2} placeholder="Message" value={t} onChange={e => setT(e.target.value)} style={{ resize: 'none', borderRadius: 20 }} />
+      <button disabled={!ok} onClick={() => { d({ type: 'send', to, t: t.trim() }); close(); }}
+        style={{ width: 44, height: 44, borderRadius: 22, background: ok ? '#007aff' : '#c7c7cc', color: '#fff', fontSize: 22, flex: 'none' }}>↑</button>
+    </div>
+  </div>);
+}
+function BEvent({ s, d, close, more }) {
+  const [t, setT] = useState(''); const [day, setDay] = useState(0); const [slot, setSlot] = useState('all'); const [who, setWho] = useState([s.me]);
+  const SLOTS = { all: ['All day', null, null], morning: ['Morning 9', 9, 10], noon: ['Noon', 12, 13], after: ['After school 3:30', 15.5, 16.5], eve: ['Evening 6', 18, 19] };
+  const build = () => ({ t: t.trim(), date: addDays(TODAY, day), s: SLOTS[slot][1], e: SLOTS[slot][2], who, loc: '', notes: '', repeat: '' });
+  return (<div style={{ padding: '14px 16px 0' }}>
+    <input className="input" autoFocus placeholder="What's happening?" value={t} onChange={e => setT(e.target.value)} />
+    <div className="muted" style={{ margin: '14px 0 6px' }}>When</div>
+    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+      {[0,1,2,3,4,5,6].map(n => <button key={n} className={'chip' + (day === n ? ' on' : '')} onClick={() => setDay(n)}>{dayLabel(addDays(TODAY, n))}</button>)}
+    </div>
+    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', margin: '8px 0 4px', paddingBottom: 4 }}>
+      {Object.entries(SLOTS).map(([k, [l]]) => <button key={k} className={'chip' + (slot === k ? ' on' : '')} onClick={() => setSlot(k)}>{l}</button>)}
+    </div>
+    <div className="muted" style={{ margin: '12px 0 8px' }}>Who's it for?</div>
+    <MemberPicker value={who} onChange={setWho} me={s.me} size={36} />
+    <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+      <button onClick={() => more(build())} style={{ flex: 1, background: '#fff', borderRadius: 12, padding: 14, color: '#007aff', fontWeight: 600 }}>More details…</button>
+      <button className="primary" style={{ flex: 2 }} disabled={!t.trim()} onClick={() => { d({ type: 'addEvent', ev: build() }); close(); }}>Add to Calendar</button>
+    </div>
+  </div>);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// C — Composer: today as a timeline; one composer bar with 🛒 💬 📅 modes
+// ═════════════════════════════════════════════════════════════════════════════
+const DAYWORDS = { today: 0, tonight: 0, tomorrow: 1, tmrw: 1 };
+function parseEvent(text, me) {
+  let t = ' ' + text + ' ', date = TODAY, s = null, e = null, who = [];
+  t = t.replace(/@(\w+)/g, (_, n) => { const k = n.toLowerCase(); if (k === 'everyone' || k === 'all') who = [EVERYONE];
+    else if (M[k]) who.push(k); return ' '; });
+  t = t.replace(/\s(today|tonight|tomorrow|tmrw)\s/i, (_, w) => { date = addDays(TODAY, DAYWORDS[w.toLowerCase()]); return ' '; });
+  t = t.replace(/\s(on\s)?(sun|mon|tue|wed|thu|fri|sat)[a-z]*\s/i, (_, __, w) => {
+    const target = DOW.findIndex(x => x.toLowerCase() === w.toLowerCase().slice(0, 3));
+    date = addDays(TODAY, ((target - TODAY.getDay()) + 7) % 7 || 7); return ' '; });
+  t = t.replace(/\s(at\s)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*[-–]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?(?=\s)/i, (m, _a, h1, m1, ap1, h2, m2, ap2) => {
+    if (!ap1 && !ap2 && !/at\s/i.test(m)) return m; // bare number, leave it
+    const ap = (ap1 || ap2 || (Number(h1) < 8 ? 'pm' : 'am')).toLowerCase();
+    const to24 = (h, mm, a) => (Number(h) % 12) + (a === 'pm' ? 12 : 0) + (mm ? Number(mm) / 60 : 0);
+    s = to24(h1, m1, ap); e = h2 ? to24(h2, m2, (ap2 || ap).toLowerCase()) : s + 1; return ' '; });
+  if (!who.length) who = [me];
+  return { t: t.replace(/\s+/g, ' ').trim(), date, s, e, who, loc: '', notes: '', repeat: '' };
+}
+function parseItem(text) {
+  let m = text.match(/^(\d+)\s*x?\s+(.+)$/i) || text.match(/^(.+?)\s+x\s*(\d+)$/i);
+  if (!m) return { t: text.trim(), q: '' };
+  return /^\d/.test(text) ? { t: m[2].trim(), q: m[1] } : { t: m[1].trim(), q: m[2] };
+}
+function VariantC({ s, d, link }) {
+  const [mode, setMode] = useState('item');
+  const [text, setText] = useState('');
+  const [list, setList] = useState('l1');
+  const [to, setTo] = useState([]);
+  const [full, setFull] = useState(null);
+  const [lists, setLists] = useState(false);
+  const endRef = useRef();
+  useEffect(() => { endRef.current && endRef.current.scrollIntoView({ block: 'end' }); }, [s.messages.length, s.events.length]);
+
+  // timeline: all-day first, then by hour; a "now" line at 3pm
+  const entries = [
+    ...s.events.filter(e => sameDay(e.date, TODAY)).map(e => ({ k: 'ev', h: e.s ?? -1, x: e })),
+    ...s.chores.filter(c => c.due <= 0 && (c.who === s.me || !c.who)).map(c => ({ k: 'ch', h: c.due < 0 ? -2 : c.by ?? -0.5, x: c })),
+    ...s.messages.filter(m => forMe(m, s.me) || m.from === s.me).map(m => ({ k: 'msg', h: m.h, x: m })),
+    { k: 'now', h: NOW_H + 0.001 },
+  ].sort((a, b) => a.h - b.h);
+  const later = s.events.filter(e => dayDiff(e.date) > 0 && sameDay(e.date, e.date)).filter(e => e.fresh);
+
+  const pe = mode === 'event' && text.trim() ? parseEvent(text, s.me) : null;
+  const pi = mode === 'item' && text.trim() ? parseItem(text) : null;
+  const canSend = text.trim() && (mode !== 'message' || to.length);
+  const send = () => {
+    if (!canSend) return;
+    if (mode === 'item') d({ type: 'addItem', list, ...pi });
+    if (mode === 'message') { d({ type: 'send', to, t: text.trim() }); }
+    if (mode === 'event') { if (!pe.t) return; d({ type: 'addEvent', ev: pe }); }
+    setText('');
+  };
+  const MODES = [['item','🛒','Item'],['message','💬','Message'],['event','📅','Event']];
+
+  const Bubble = ({ e }) => {
+    if (e.k === 'now') return <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '6px 16px', color: '#ff3b30', fontSize: 12, fontWeight: 600 }}>
+      NOW 3:00pm<div style={{ flex: 1, height: 1, background: '#ff3b30' }} /></div>;
+    if (e.k === 'ev') { const ev = e.x;
+      return <div className={ev.fresh ? 'flash' : ''} style={{ margin: '4px 16px', display: 'flex', gap: 10, alignItems: 'center', opacity: ev.s != null && ev.e < NOW_H ? .45 : 1 }}>
+        <span className="muted" style={{ width: 52, textAlign: 'right' }}>{ev.s == null ? 'all-day' : fmtH(ev.s)}</span>
+        <div style={{ flex: 1, background: '#fff', borderRadius: 12, padding: '8px 12px', borderLeft: `4px solid ${ev.who.length === 1 && M[ev.who[0]] ? M[ev.who[0]].color : '#94a3b8'}` }}>
+          📅 {ev.t}{ev.loc && <span className="muted"> · {ev.loc}</span>}</div><Who who={ev.who} /></div>; }
+    if (e.k === 'ch') { const c = e.x, open = c.state === 'open';
+      return <div className={link && link.id === c.id ? 'flash' : ''} style={{ margin: '4px 16px', display: 'flex', gap: 10, alignItems: 'center' }}>
+        <span className="muted" style={{ width: 52, textAlign: 'right', color: open && c.due < 0 ? '#ff3b30' : undefined }}>{c.due < 0 ? 'late' : c.by ? 'by ' + fmtH(c.by) : 'today'}</span>
+        <div style={{ flex: 1, background: open ? '#fffbe6' : '#f0f0f0', borderRadius: 12, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ flex: 1, textDecoration: open ? 'none' : 'line-through', opacity: open ? 1 : .5 }}>✅ {c.t}{!c.who && <span className="muted"> · anyone</span>}</span>
+          {open ? <><button className="muted" onClick={() => d({ type: 'chore', id: c.id, state: 'skipped' })}>Skip</button>
+            <button onClick={() => d({ type: 'chore', id: c.id, state: 'done' })} className="check" title="Done" /></>
+            : <span className="muted">{c.state === 'done' ? 'Done' : 'Skipped'}</span>}
+        </div></div>; }
+    const m = e.x, mine = m.from === s.me, unseen = !mine && !m.seen.includes(s.me);
+    return <div className={(link && link.id === m.id) || m.fresh ? 'flash' : ''} style={{ margin: '6px 16px', display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', gap: 8, alignItems: 'flex-end' }}
+      onClick={() => d({ type: 'seen', id: m.id })}>
+      {!mine && <Avatar id={m.from} size={26} />}
+      <div style={{ maxWidth: '72%' }}>
+        <div className="muted" style={{ fontSize: 11, textAlign: mine ? 'right' : 'left', margin: '0 6px 2px' }}>
+          {mine ? 'You' : M[m.from].name} → {m.to.includes(EVERYONE) ? 'Everyone' : m.to.map(w => w === s.me ? 'you' : M[w].name).join(', ')} · {fmtH(m.h)}</div>
+        <div style={{ background: mine ? '#007aff' : '#fff', color: mine ? '#fff' : '#111', borderRadius: 18, padding: '9px 13px', fontWeight: unseen ? 600 : 400,
+          boxShadow: unseen ? '0 0 0 2px #007aff' : 'none' }}>{m.t}</div>
+        {mine && <div className="muted" style={{ fontSize: 11, textAlign: 'right', margin: '2px 6px' }}>{m.seen.length ? 'Seen by ' + m.seen.map(w => M[w].name).join(', ') : 'Delivered'}</div>}
+      </div></div>;
+  };
+
+  return (<>
+    <div style={{ padding: '0 16px 8px', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ flex: 1 }}><div style={{ fontSize: 22, fontWeight: 700 }}>Today</div><div className="muted">Fri 2 Oct · ⛅ 64°, high 71°</div></div>
+      <button className="chip" style={{ background: '#fff' }} onClick={() => setLists(true)}>🛒 Lists</button>
+      <Avatar id={s.me} size={34} />
+    </div>
+    <div className="scroll" style={{ paddingBottom: 10 }}>
+      {entries.map((e, i) => <Bubble key={i} e={e} />)}
+      {later.map(ev => <div key={ev.id} className="flash" style={{ margin: '8px 16px', background: '#fff', borderRadius: 12, padding: '8px 12px' }}>
+        📅 Added for {dayLabel(ev.date)}: <b>{ev.t}</b> · {evTime(ev)}</div>)}
+      <div ref={endRef} />
+    </div>
+
+    {/* live preview of what the composer will create */}
+    {(pe || pi) && <div style={{ margin: '0 12px 6px', background: '#fff', borderRadius: 12, padding: '8px 12px', fontSize: 14, boxShadow: '0 2px 10px rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 8 }}>
+      {pe && <><span style={{ flex: 1 }}>📅 <b>{pe.t || '…'}</b> · {dayLabel(pe.date)} · {evTime(pe)}</span><Who who={pe.who} /><button className="blue" onClick={() => setFull(pe)}>Details</button></>}
+      {pi && <span>🛒 <b>{pi.t}</b>{pi.q && ` × ${pi.q}`} → {listName(s, list)}</span>}
+    </div>}
+    {mode === 'message' && <div style={{ padding: '6px 16px 8px' }}><MemberPicker value={to} onChange={setTo} exclude={s.me} size={30} /></div>}
+
+    <div style={{ background: 'rgba(249,249,249,.97)', borderTop: '.5px solid #d1d1d6', padding: '8px 10px 30px' }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        {MODES.map(([k, ic, l]) => <button key={k} className={'chip' + (mode === k ? ' on' : '')} onClick={() => setMode(k)}>{ic} {l}</button>)}
+        {mode === 'item' && <select value={list} onChange={e => setList(e.target.value)} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: '#007aff' }}>
+          {s.lists.map(l => <option key={l.id} value={l.id}>→ {l.name}</option>)}</select>}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()}
+          placeholder={{ item: 'e.g. 2 milk', message: 'Message…', event: 'e.g. Dentist tue 3:30pm @riley' }[mode]}
+          style={{ flex: 1, border: '1px solid #d1d1d6', borderRadius: 20, padding: '9px 14px', fontSize: 16, outline: 'none' }} />
+        <button onClick={send} disabled={!canSend} style={{ width: 38, height: 38, borderRadius: 19, background: canSend ? '#007aff' : '#c7c7cc', color: '#fff', fontSize: 20 }}>↑</button>
+      </div>
+    </div>
+
+    {full && <Sheet full onClose={() => setFull(null)}>
+      <EventForm me={s.me} initial={full} onCancel={() => setFull(null)} onSave={ev => { d({ type: 'addEvent', ev }); setFull(null); setText(''); }} /></Sheet>}
+    {lists && <Sheet full onClose={() => setLists(false)}>
+      <div className="navbar"><span /><b>Shopping Lists</b><button className="blue" onClick={() => setLists(false)}>Done</button></div>
+      <div className="scroll">{s.lists.map(l => <div key={l.id}><div className="grouphead">{l.name}</div><div className="group">
+        {[...l.items.filter(i => !i.got), ...l.items.filter(i => i.got)].map(i => <div key={i.id} className="row">
+          <button className={'check' + (i.got ? ' on' : '')} onClick={() => d({ type: 'tickItem', list: l.id, id: i.id })}>{i.got ? '✓' : ''}</button>
+          <div style={{ flex: 1, opacity: i.got ? .4 : 1 }}>{i.t}{i.q && <span className="muted"> × {i.q}</span>}</div><Avatar id={i.by} size={20} /></div>)}
+      </div></div>)}</div>
+    </Sheet>}
+  </>);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// shell: phone frame, toast with Undo, fake push banners, switcher, state panel
+// ═════════════════════════════════════════════════════════════════════════════
+const VARIANTS = { A: ['Tabs', VariantA], B: ['Home + ＋', VariantB], C: ['Composer', VariantC] };
+const KEYS = Object.keys(VARIANTS);
+
+function App() {
+  const [variant, setVariant] = useState(() => { const v = new URLSearchParams(location.search).get('variant'); return KEYS.includes(v) ? v : 'A'; });
+  const [s, d] = useReducer(reducer, INITIAL);
+  const [banner, setBanner] = useState(null);
+  const [link, setLink] = useState(null);
+  const go = dir => { const v = KEYS[(KEYS.indexOf(variant) + dir + KEYS.length) % KEYS.length];
+    setVariant(v); const u = new URL(location); u.searchParams.set('variant', v); history.replaceState(null, '', u); };
+  useEffect(() => {
+    const onKey = e => { const t = e.target; if (t.closest && t.closest('input,textarea,select,[contenteditable]')) return;
+      if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1); };
+    addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey);
+  });
+  useEffect(() => { if (!s.toast) return; const t = setTimeout(() => d({ type: 'clearToast' }), 4000); return () => clearTimeout(t); }, [s.toast && s.toast.n]);
+  useEffect(() => { if (!banner) return; const t = setTimeout(() => setBanner(null), 6000); return () => clearTimeout(t); }, [banner]);
+
+  const push = kind => {
+    if (kind === 'chore') { const c = s.chores.find(c => c.who === s.me && c.state === 'open' && c.by) || s.chores.find(c => c.who === s.me && c.state === 'open');
+      if (c) setBanner({ kind, id: c.id, title: 'Chore due', body: `${c.t}${c.by ? ` — by ${fmtH(c.by)}` : ''}` }); }
+    if (kind === 'digest') { const n = s.chores.filter(c => c.who === s.me && c.state === 'open' && c.due <= 0).length;
+      setBanner({ kind: 'chore', id: null, title: 'Your Chores today', body: `${n} to do — tap to see them` }); }
+    if (kind === 'message') { const from = MEMBERS.find(m => m.id !== s.me);
+      const msg = { id: nid('m'), from: from.id, to: [s.me], t: 'Can you grab the mail on your way in?', h: NOW_H, seen: [] };
+      s.messages.push(msg); // prototype-only shortcut
+      setBanner({ kind, id: msg.id, title: from.name, body: msg.t }); }
+  };
+  const Variant = VARIANTS[variant][1];
+  const fresh = [...s.events.filter(e => e.fresh), ...s.messages.filter(m => m.fresh && m.from)].slice(-3);
+
+  return (
+    <div className="desk">
+      <div className="phone">
+        <div className="statusbar"><span>3:00</span><span>􀙇 ▮▮▮ 🔋</span></div>
+        <div className="screen">
+          <Variant key={variant + s.me} s={s} d={d} link={link} />
+          {s.toast && <div className="toast" key={s.toast.n}><span style={{ flex: 1 }}>{s.toast.text}</span>
+            {s.toast.undo && <button style={{ color: '#ffd60a', fontWeight: 600, marginLeft: 12 }} onClick={() => d({ type: 'undo' })}>Undo</button>}</div>}
+        </div>
+        {banner && <button className="banner" onClick={() => { setLink({ kind: banner.kind, id: banner.id, n: Date.now() }); setBanner(null); }}>
+          <span style={{ width: 38, height: 38, borderRadius: 9, background: '#3b82f6', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>🏠</span>
+          <span style={{ flex: 1 }}><span style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><b>{banner.title}</b><span className="muted">now</span></span>
+            <span style={{ fontSize: 15 }}>{banner.body}</span></span>
+        </button>}
+        <div className="homebar" />
+      </div>
+
+      <div className="panel">
+        <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Phone flows prototype</div>
+        <div style={{ marginTop: 4 }}>Try: add an Item · tick a Chore · send a Message · add an Event. Every change shows an Undo toast.</div>
+        <h3>Signed in as</h3>
+        {MEMBERS.map(m => <button key={m.id} className={'pbtn' + (s.me === m.id ? ' on' : '')} onClick={() => d({ type: 'me', id: m.id })}>{m.name} · {m.role}</button>)}
+        <h3>Fake a push notification</h3>
+        <button className="pbtn" onClick={() => push('digest')}>8:00 Chore digest</button>
+        <button className="pbtn" onClick={() => push('chore')}>Chore due in 1 h</button>
+        <button className="pbtn" onClick={() => push('message')}>New Message</button>
+        <h3>Log</h3>
+        <div className="log">{s.log.length ? s.log.map((l, i) => <div key={i}><span>{l.at}</span>{l.text}</div>) : <div style={{ color: '#475569' }}>Nothing yet.</div>}</div>
+        <h3>Counts</h3>
+        <pre className="dump">{JSON.stringify({
+          openChoresMine: s.chores.filter(c => c.who === s.me && c.state === 'open').length,
+          items: Object.fromEntries(s.lists.map(l => [l.name, l.items.filter(i => !i.got).length])),
+          unseenMessagesForMe: s.messages.filter(m => forMe(m, s.me) && !m.seen.includes(s.me)).length,
+          eventsNext7Days: s.events.filter(e => dayDiff(e.date) >= 0 && dayDiff(e.date) < 7).length,
+        }, null, 1)}</pre>
+        {fresh.length > 0 && <><h3>Created this session</h3><pre className="dump">{JSON.stringify(fresh.map(({ fresh, date, ...x }) => date ? { ...x, date: toISO(date) } : x), null, 1)}</pre></>}
+      </div>
+
+      {process.env.NODE_ENV !== 'production' && <div className="switcher">
+        <button onClick={() => go(-1)}>‹</button>
+        <span>{variant} — {VARIANTS[variant][0]}</span>
+        <button onClick={() => go(1)}>›</button>
+      </div>}
+    </div>
+  );
+}
+window.process = { env: { NODE_ENV: 'development' } };
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
